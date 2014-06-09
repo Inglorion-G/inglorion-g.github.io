@@ -67,7 +67,8 @@
     };
 
     Game.prototype.draw = function (ctx) {
-      ctx.clearRect(0, 0, Game.DIM_X, Game.DIM_Y);
+			ctx.fillStyle = "black";
+      ctx.fillRect(0, 0, Game.DIM_X, Game.DIM_Y);
 
       this.ship.draw(ctx);
 

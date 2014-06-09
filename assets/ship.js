@@ -29,7 +29,7 @@
         ctx.save();
         ctx.translate(this.pos[0],this.pos[1]);
         ctx.rotate(this.bearing);
-        ctx.fillStyle = "orange";
+        ctx.fillStyle = "#7cfc00";
         ctx.strokeStyle = "blue";
         ctx.beginPath();
         ctx.moveTo(v[0][0],v[0][1]);
