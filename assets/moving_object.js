@@ -11,12 +11,9 @@
     };
 
     MovingObject.prototype.move = function () {
-      // velocity in pixels/second
-	    var fps = Asteroids.Game.FPS;
-	    var pxPerSec = this.vel[0] / fps;
-	    var newx = this.pos[0] + pxPerSec * Math.cos(this.vel[1]);
-	    var newy = this.pos[1] + pxPerSec * Math.sin(this.vel[1]);
-	    this.pos = [newx, newy];
+      var dx = this.vel[0];
+			var dy = this.vel[1];
+			this.pos = [(this.pos[0] + dx), (this.pos[1] + dy)]
     };
 
     MovingObject.prototype.draw = function (ctx) {
@@ -64,8 +61,7 @@
 			var y1 = this.pos[1];
 			var y2 = otherObject.pos[1];
 			
-      var distance = Math.pow((
-          Math.pow((x2 - x1), 2) + Math.pow((y2 - y1), 2)), 0.5);
+      var distance = Math.sqrt(Math.pow((x2 - x1), 2) + Math.pow((y2 - y1), 2));
 
       return (this.radius + otherObject.radius) > distance;
     };

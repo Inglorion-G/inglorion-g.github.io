@@ -2,25 +2,37 @@
 
     var Asteroids = root.Asteroids = (root.Asteroids || {});
 
-    var Bullet = Asteroids.Bullet = function (pos, direction, game) {
+    var Bullet = Asteroids.Bullet = function (ship, game) {
+			
+	    Bullet.RADIUS = 2;
+	    Bullet.COLOR = "red";
+	    Bullet.SPEED = 10;
+			var pos = ship.pos;
+			var vel = ship.vel;
+			var bearing = ship.bearing;
+		  var newVel = vel.slice(0)
+		  newVel[0] += (5 * Math.cos(bearing));
+		  newVel[1] += (5 * Math.sin(bearing));
+			vel = newVel;
+			
       Asteroids.MovingObject.call(
-        this, pos, [Bullet.SPEED, direction], Bullet.RADIUS, Bullet.COLOR
+        this, pos, vel, Bullet.RADIUS, Bullet.COLOR
       );
       this.game = game;
     };
 
     Bullet.inherits(Asteroids.MovingObject);
 
-    Bullet.RADIUS = 2;
-    Bullet.COLOR = "red";
-    Bullet.SPEED = 140;
-
     Bullet.prototype.hitAsteroids = function() {
       bullet = this;
 
       this.game.asteroids.forEach( function(asteroid) {
         if (bullet.isCollidedWith(asteroid)) {
-          game.removeAsteroid(asteroid);
+					if (asteroid.radius >= 20) {
+						this.game.splitAsteroid(asteroid);
+					} else {
+						game.removeAsteroid(asteroid);
+					}
           game.removeBullet(bullet);
         };
       });

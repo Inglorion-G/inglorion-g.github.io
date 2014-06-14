@@ -10,12 +10,24 @@
     Asteroid.RADIUS = 30;
 
     Asteroid.inherits(Asteroids.MovingObject);
-
+		
+		Asteroid.prototype.generateSubAsteroids = function() {
+			
+			var vel1 = Asteroids.randomVel();
+			var vel2 = Asteroids.randomVel();
+			
+			var subAsteroid1 = new Asteroids.Asteroid(this.pos, vel1, this.radius / 2, Asteroid.COLOR);
+			var subAsteroid2 = new Asteroids.Asteroid(this.pos, vel2, this.radius / 2, Asteroid.COLOR);
+			return [subAsteroid1, subAsteroid2];
+		};
 
     Asteroid.randomAsteroid = function (maxX, maxY) {
       var posX = maxX * Math.random();
       var posY = maxY * Math.random();
-      while (posX > 220 && posX < 280 && posY > 220 && posY < 280) {
+			var midX = maxX / 2
+			var midY = maxY / 2
+			
+      while (posX > midX - 30 && posX < midX + 30 && posY > midY - 30 && posY < midY + 30) {
         posX = maxX * Math.random();
         posY = maxY * Math.random();
       }
@@ -23,7 +35,7 @@
 
       return new Asteroid(
         astPos,
-        Asteroids.randomVec(),
+        Asteroids.randomVel(),
         (Math.random() * Asteroid.RADIUS) + 10,
         Asteroid.COLOR
       );
