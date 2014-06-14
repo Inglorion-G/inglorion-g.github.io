@@ -63,8 +63,7 @@
 
     Game.prototype.removeAsteroid = function(asteroid) {
       this.asteroids.splice(this.asteroids.indexOf(asteroid), 1);
-			var explosion = new Audio('explosion.wav');
-			explosion.play();
+			document.getElementById('explosion').play();
     };
 
     Game.prototype.checkMovingObjects = function () {
@@ -77,8 +76,7 @@
 
     Game.prototype.fireBullet = function () {
 			if (this.ship.canFire) {
-				var laser = new Audio('laser.wav');
-				laser.play();
+				document.getElementById('laser').play();
 	      var newBullet = this.ship.fireBullet(this);
 	      this.bullets.push(newBullet);
 			}
@@ -139,7 +137,7 @@
     };
 
     Game.prototype.start = function () {
-			//document.getElementById('music').play();
+			document.getElementById('music').play();
       this.intervalID = setInterval(this.step.bind(this), 1000 * (1 / Game.FPS));
 			this.bindKeyListeners();
     };
