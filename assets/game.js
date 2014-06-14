@@ -139,7 +139,7 @@
     };
 
     Game.prototype.start = function () {
-			document.getElementById('music').play();
+			//document.getElementById('music').play();
       this.intervalID = setInterval(this.step.bind(this), 1000 * (1 / Game.FPS));
 			this.bindKeyListeners();
     };
