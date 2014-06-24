@@ -20,6 +20,24 @@
 			var subAsteroid2 = new Asteroids.Asteroid(this.pos, vel2, this.radius / 2, Asteroid.COLOR);
 			return [subAsteroid1, subAsteroid2];
 		};
+		
+    Asteroid.prototype.draw = function (ctx) {
+	    ctx.fillStyle = this.color;
+	    ctx.beginPath();
+	    ctx.arc(
+	      this.pos[0],
+	      this.pos[1],
+	      this.radius,
+	      0,
+	      2 * Math.PI,
+	      false
+			);
+			ctx.strokeStyle = "green";
+			ctx.stroke();
+			ctx.lineWidth = 2;
+			
+	    ctx.fill();
+    };
 
     Asteroid.randomAsteroid = function (maxX, maxY) {
       var posX = maxX * Math.random();
@@ -27,16 +45,17 @@
 			var midX = maxX / 2
 			var midY = maxY / 2
 			
-      while (posX > midX - 30 && posX < midX + 30 && posY > midY - 30 && posY < midY + 30) {
+      while (posX > midX - 100 && posX < midX + 100 && posY > midY - 100 && posY < midY + 100) {
         posX = maxX * Math.random();
         posY = maxY * Math.random();
       }
+			
       var astPos = [posX, posY];
 
       return new Asteroid(
         astPos,
         Asteroids.randomVel(),
-        (Math.random() * Asteroid.RADIUS) + 10,
+        (Math.random() * Asteroid.RADIUS) + 30,
         Asteroid.COLOR
       );
     };

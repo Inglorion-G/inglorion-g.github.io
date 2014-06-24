@@ -19,6 +19,16 @@
 			return [x, y];
     };
 		
+		Asteroids.starVel = function() {
+			var x = Math.floor(Math.random() * (-2));
+			var y = 0;
+			if (x === 0) {
+				x -= 1;
+			}
+			
+			return [x, y];
+		};
+		
 		// math functions
 		
 	  Number.prototype.toRads = function () {
