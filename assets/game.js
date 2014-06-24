@@ -90,7 +90,7 @@
 
     Game.prototype.removeAsteroid = function(asteroid) {
       this.asteroids.splice(this.asteroids.indexOf(asteroid), 1);
-			var explosion = new Audio('explosion.wav');
+			var explosion = new Audio('assets/explosion.wav');
 			explosion.play();
     };
 
@@ -113,7 +113,7 @@
 
     Game.prototype.fireBullet = function () {
 			if (this.ship.canFire) {
-				var laser = new Audio('laser.wav');
+				var laser = new Audio('assets/laser.wav');
 				laser.play();
 	      var newBullet = this.ship.fireBullet(this);
 	      this.bullets.push(newBullet);
@@ -122,7 +122,7 @@
 		
 		Game.prototype.fireShotgun = function () {
 			if (this.ship.canFire) {
-				var laser = new Audio('laser.wav');
+				var laser = new Audio('assets/laser.wav');
 				laser.play();
 	      var blast = this.ship.fireShotgun(this);
 				for (var i = 0; i < blast.length; i++) {
