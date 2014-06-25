@@ -17,6 +17,8 @@
 			this.score = 0;
 	    this.ship = new Asteroids.Ship(pos, vel);
 			this.hud = new Asteroids.Hud(this);
+			this.paused = false;
+			this.started = false;
     };
 
     Game.DIM_X = window.innerWidth - 20;
@@ -90,7 +92,7 @@
 
     Game.prototype.removeAsteroid = function(asteroid) {
       this.asteroids.splice(this.asteroids.indexOf(asteroid), 1);
-			var explosion = new Audio('assets/explosion.wav');
+			var explosion = new Audio('explosion.wav');
 			explosion.play();
     };
 
@@ -113,7 +115,7 @@
 
     Game.prototype.fireBullet = function () {
 			if (this.ship.canFire) {
-				var laser = new Audio('assets/laser.wav');
+				var laser = new Audio('laser.wav');
 				laser.play();
 	      var newBullet = this.ship.fireBullet(this);
 	      this.bullets.push(newBullet);
@@ -122,7 +124,7 @@
 		
 		Game.prototype.fireShotgun = function () {
 			if (this.ship.canFire) {
-				var laser = new Audio('assets/laser.wav');
+				var laser = new Audio('laser.wav');
 				laser.play();
 	      var blast = this.ship.fireShotgun(this);
 				for (var i = 0; i < blast.length; i++) {
@@ -209,10 +211,46 @@
     };
 
     Game.prototype.start = function () {
+			var that = this;
+			this.bindKeyListeners();
 			document.getElementById('music').play();
       this.intervalID = setInterval(this.step.bind(this), 1000 * (1 / Game.FPS));
-			this.bindKeyListeners();
+			this.instructions();
+			
+			if (!this.started) {
+				$(window).keydown(function(e) {
+					if (e.which === 80 && !that.paused) {
+						that.pause();
+					} else {
+						that.resume();
+					}
+				});
+				this.started = true;
+			}
     };
+		
+		Game.prototype.instructions = function() {
+			clearInterval(this.intervalID);
+			this.paused = true;
+			if (!this.started) {
+			  this.hud.drawInstructions(this.ctx);
+			} else {
+				this.hud.nextLevel(this.ctx);
+			}
+		}
+		
+		Game.prototype.pause = function () {
+			clearInterval(this.intervalID);
+			this.paused = true;
+			this.hud.pause(this.ctx);	
+		};
+		
+		
+		Game.prototype.resume = function () {
+			this.paused = false;
+			clearInterval(this.intervalID);
+			this.intervalID = setInterval(this.step.bind(this), 1000 * (1 / Game.FPS));
+		};
 		
 		Game.prototype.nextLevel = function () {
 			clearInterval(this.intervalID);
@@ -230,6 +268,7 @@
 		}
 	
 		Game.prototype.keyPressEvents = function() {
+			
 	    if (this.keyMap[87]) {
 			  this.ship.thrust(1);
 	    };
@@ -253,6 +292,7 @@
 					this.fireShotgun();
 				}
 	    };
+			
 		};
 		
 		Game.prototype.bindKeyListeners = function () {
