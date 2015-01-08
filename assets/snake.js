@@ -53,9 +53,9 @@
 	};
 
 	Snake.prototype.draw = function() {
-		$(".tile").removeClass("snake");
+		$(".tile").removeClass("snake head");
 
-		$("#"+this.head_pos.join("_")).addClass("snake");
+		$("#"+this.head_pos.join("_")).addClass("snake head");
 
 		if(this.body_length > 1) {
 			$.each(this.body_positions, function(idx, pos) {
@@ -68,6 +68,14 @@
 		this.paused = true;
 		this.stopped = false;
 		this.grow = null;
+		this.lost = false;
+		this.tiles = {};
+
+		for(var i = 0; i < 16; i++) {
+			for(var j = 0; j < 16; j++) {
+				this.tiles[[i, j]] = false;
+			}
+		}
 	};
 
 	Game.prototype.setBoard = function() {
@@ -144,7 +152,7 @@
 				break;
 
 				case 32:
-				if (that.paused) {
+				if (that.paused && !that.lost) {
 					that.intervalID = setInterval(that.tick.bind(that), 120);
 					that.paused = false;
 					$(".info").hide();
@@ -169,11 +177,24 @@
 		this.snake = snake;
 	};
 
-	Game.prototype.randomApple = function() {
-		var x = Math.floor(Math.random() * (15 - 0 + 1));
-		var y = Math.floor(Math.random() * (15 - 0 + 1));
+	Game.prototype.randomCoord = function() {
 
-		this.apple = new Apple([x, y]);
+		var freeTiles = [];
+		for(tile in this.tiles) {
+			if (!this.tiles[tile]) {
+				freeTiles.push(tile);
+			}
+		}
+
+		var n = Math.floor(Math.random() * ((freeTiles.length - 1) - 0 + 1));
+		var new_tile = freeTiles[n].split(/,/);
+		new_tile.forEach(function(val, i) { new_tile[i] = parseInt(val) });
+		return new_tile;
+	}
+
+	Game.prototype.randomApple = function() {
+		var new_pos = this.randomCoord();
+		this.apple = new Apple(new_pos);
 	};
 
 	Array.prototype.equals = function(array) {
@@ -189,8 +210,13 @@
 	Game.prototype.checkCollisions = function() {
 		var head = this.snake.head_pos;
 
+		for(tile in this.tiles) {
+			this.tiles[tile] = false;
+		}
+
 		for(var i = 0, l = this.snake.body_positions.length; i < l; i ++) {
 			var body = this.snake.body_positions[i];
+			this.tiles[body] = true;
 			if(head.equals(body)) {
 				this.stopGame();
 			}
@@ -215,6 +241,7 @@
 	Game.prototype.stopGame = function() {
 		clearInterval(this.intervalID);
 		this.stopped = true;
+		this.lost = true;
 		alert("You lost! Reload to try again!");
 	};
 
