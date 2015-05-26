@@ -2,18 +2,20 @@
 
 	var SnakeGame = root.SnakeGame = (root.SnakeGame || {});
 
+	var canvas = document.getElementById('snake_canvas');
+	var ctx = canvas.getContext('2d');
+	ctx.canvas.height = 480;
+	ctx.canvas.width = 480;
+
 	var Apple = SnakeGame.Apple = function(pos) {
 		this.pos = pos;
 	};
 
-	Apple.prototype.draw = function(p) {
-		var pos = "#"+p[0]+"_"+p[1];
-		$(pos).addClass("apple");
+	Apple.prototype.draw = function() {
+		var p = this.pos;
+		drawEmptySquare(p, 30);
+		//drawSquare(p, 30, "C40000");
 	};
-
-	Apple.prototype.remove = function() {
-		$(".tile").removeClass("apple");
-	}
 
 	var Snake = SnakeGame.Snake = function() {
 		this.head_pos = [4, 4];
@@ -21,45 +23,56 @@
 		this.direction = "right";
 		this.opposite = "left";
 		this.body_length = 4;
-	}
+	};
 
 	Snake.prototype.move = function() {
 		for (var i = this.body_length - 1; i > 0; i--) {
 			this.body_positions[i] = this.body_positions[i - 1].slice(0);
 		}
+
 		this.body_positions[0] = this.head_pos.slice(0);
 
-		if (this.direction === "up") {
-			this.head_pos[0] --;
-		} else if (this.direction === "right") {
-			this.head_pos[1] ++;
-		} else if (this.direction === "down") {
-			this.head_pos[0] ++;
-		} else if (this.direction === "left") {
-			this.head_pos[1] --;
+		var x = this.head_pos[1];
+		var y = this.head_pos[0];
+
+		switch(this.direction) {
+			case "up":
+				y --;
+				if(y < 0)
+					y = 15;
+				break;
+
+			case "right":
+				x = (x + 1) % 16;
+				break;
+
+			case "down":
+				y = (y + 1) % 16;
+				break;
+
+			case "left":
+				x --;
+				if(x < 0)
+					x = 15;
+				break;
+
+			default:
+				break;
 		}
 
-		if (this.head_pos[1] === 16) {
-			this.head_pos[1] = 0;
-		} else if (this.head_pos[1] === -1) {
-			this.head_pos[1] = 15;
-		} else if (this.head_pos[0] === 16) {
-			this.head_pos[0] = 0;
-		} else if (this.head_pos[0] === -1) {
-			this.head_pos[0] = 15;
-		}
-
+		this.head_pos[1] = x;
+		this.head_pos[0] = y;
 		this.draw();
 	};
 
 	Snake.prototype.draw = function() {
-		$(".tile").removeClass("snake head");
+		// draw head segment
+		drawSquare(this.head_pos, 30, "251810");
 
-		$("#"+this.head_pos.join("_")).addClass("snake head");
-
+		// draw body segments
 		if(this.body_length > 1) {
 			$.each(this.body_positions, function(idx, pos) {
-				$("#" + pos.join("_")).addClass("snake");
+				drawSquare(pos, 30, "251810");
 			});
 		}
 	};
@@ -78,80 +91,61 @@
 		}
 	};
 
-	Game.prototype.setBoard = function() {
-		var row = 0;
-		var col = 0;
-		var snk = "snake";
-		for(i = 0; i < 256; i++) {
-			$(".container").append("<div id=" + row + "_" + col + " class='tile'></div>");
-			if (col === 15) {
-				row ++;
-				col = 0;
-			} else {
-				snk = "";
-				col ++;
-			}
-		}
-	};
-
 	Game.prototype.tick = function() {
+		ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+		this.apple.draw();
 		this.growSnake();
 		this.snake.move();
 		this.checkCollisions();
 	};
 
-	Game.prototype.setDir = function(dir) {
+	Game.prototype.setDir = function(keyCode) {
 
-		if (dir === this.snake.opposite) {
-			return
-		}
+		var dir = '';
 
-		this.snake.direction = dir;
-		switch(dir) {
-			case "up":
-			this.snake.opposite = "down";
-			break;
+		switch(keyCode) {
+			case 38:
+				dir = "up";
+				opp = "down";
+				break;
 
-			case "left":
-			this.snake.opposite = "right";
-			break;
+			case 37:
+				dir = "left";
+				opp = "right";
+				break;
 
-			case "right":
-			this.snake.opposite = "left";
-			break;
+			case 39:
+				dir = "right";
+				opp = "left";
+				break;
 
-			case "down":
-			this.snake.opposite = "up";
-			break;
+			case 40:
+				dir = "down";
+				opp = "up";
+				break;
 
 			default: return;
+		}
+
+		if (dir === this.snake.opposite) {
+			return;
+		} else {
+			this.snake.direction = dir;
+			this.snake.opposite = opp;
 		}
 	};
 
 	Game.prototype.run = function() {
 		var that = this;
 		this.randomApple();
-		this.apple.draw(this.apple.pos);
+		this.apple.draw();
 
 		$(document).keydown(function(e) {
-			switch(e.which) {
-				case 37:
-				that.setDir("left");
-				break;
+			var keyCode = e.which;
 
-				case 38:
-				that.setDir("up");
-				break;
-
-				case 39:
-				that.setDir("right");
-				break;
-
-				case 40:
-				that.setDir("down");
-				break;
-
-				case 32:
+			if(keyCode > 36 && keyCode < 41) {
+				that.setDir(keyCode);
+			} else if (keyCode === 32) {
 				if (that.paused && !that.lost) {
 					that.intervalID = setInterval(that.tick.bind(that), 120);
 					that.paused = false;
@@ -161,10 +155,8 @@
 					that.paused = true;
 					$(".info").show();
 				}
-				break;
-
-				default: return;
 			}
+
 			e.preventDefault();
 		});
 
@@ -180,7 +172,7 @@
 	Game.prototype.randomCoord = function() {
 
 		var freeTiles = [];
-		for(tile in this.tiles) {
+		for(var tile in this.tiles) {
 			if (!this.tiles[tile]) {
 				freeTiles.push(tile);
 			}
@@ -188,9 +180,10 @@
 
 		var n = Math.floor(Math.random() * ((freeTiles.length - 1) - 0 + 1));
 		var new_tile = freeTiles[n].split(/,/);
-		new_tile.forEach(function(val, i) { new_tile[i] = parseInt(val) });
+		new_tile.forEach(function(val, i) { new_tile[i] = parseInt(val, 10); });
+
 		return new_tile;
-	}
+	};
 
 	Game.prototype.randomApple = function() {
 		var new_pos = this.randomCoord();
@@ -210,7 +203,7 @@
 	Game.prototype.checkCollisions = function() {
 		var head = this.snake.head_pos;
 
-		for(tile in this.tiles) {
+		for(var tile in this.tiles) {
 			this.tiles[tile] = false;
 		}
 
@@ -223,9 +216,8 @@
 		}
 
 		if(this.snake.head_pos.equals(this.apple.pos)) {
-			this.apple.remove();
 			this.randomApple();
-			this.apple.draw(this.apple.pos);
+			this.apple.draw();
 			this.grow = (this.snake.body_positions[this.snake.body_positions.length - 1]).slice(0);
 		}
 	};
@@ -236,7 +228,7 @@
 			this.snake.body_length ++;
 			this.grow = null;
 		}
-	}
+	};
 
 	Game.prototype.stopGame = function() {
 		clearInterval(this.intervalID);
@@ -244,5 +236,27 @@
 		this.lost = true;
 		alert("You lost! Reload to try again!");
 	};
+
+	function drawEmptySquare(pos, mag) {
+		var m = Math.floor(mag / 10);
+		var y = pos[0] * mag + m;
+		var x = pos[1] * mag + m;
+		ctx.beginPath();
+		ctx.lineWidth = m;
+		ctx.strokeStyle = "#251810";
+		ctx.strokeRect(x, y, mag - (2 * m), mag - (2 * m));
+	}
+
+	function drawSquare(pos, mag, color) {
+		var y = pos[0] * mag;
+		var x = pos[1] * mag;
+		ctx.beginPath();
+		ctx.rect(x, y, mag, mag);
+		ctx.fillStyle = "#" + color;
+		ctx.fill();
+		ctx.lineWidth = Math.floor(mag / 10);
+		ctx.strokeStyle = "#9ACC99";
+		ctx.stroke();
+	}
 
 })(this);

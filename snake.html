@@ -1,23 +1,18 @@
 <html>
 <head>
 	<title>Snake</title>
+</head>
+<body>
+	<canvas id="snake_canvas"></canvas>
+	<div class="info">
+		<p>Snake! Use the arrow keys to move. Don't run into your body. <br> Eat apples to grow! Press spacebar to play and pause.</p>
+	</div>
+
 	<script src="http://ajax.googleapis.com/ajax/libs/jquery/2.1.1/jquery.min.js"></script>
 	<script src='./assets/snake.js'></script>
 	<link rel="stylesheet" href="./css/snake.css">
-</head>
-<body>
-	<div class='container'>
-		<div class="info">
-			<p>Snake! Use the arrow keys to move.</p>
-			<p>Don't run into your body.</p>
-			<p>Eat apples to grow!</p>
-			<p>Press spacebar to play and pause.</p>
-		</div>
-	</div>
-
 	<script>
 		var game = new SnakeGame.Game();
-		game.setBoard();
 		game.addSnake([4,4]);
 		game.run();
 	</script>
