@@ -164,7 +164,7 @@
 			e.preventDefault();
 		});
 
-		$('.control-btn').click(function() {
+		$('.control-btn').mousedown(function() {
 			var dir = $(this).attr('id');
 			that.setDir(dir);
 		});
