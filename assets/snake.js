@@ -164,7 +164,7 @@
 			e.preventDefault();
 		});
 
-		$('.control-btn').mousedown(function() {
+		$('.control-btn').on('mousedown touchstart', function() {
 			var dir = $(this).attr('id');
 			that.setDir(dir);
 		});
