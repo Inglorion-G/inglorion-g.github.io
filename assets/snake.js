@@ -105,21 +105,25 @@
 
 		switch(keyCode) {
 			case 38:
+			case "up":
 				dir = "up";
 				opp = "down";
 				break;
 
 			case 37:
+			case "left":
 				dir = "left";
 				opp = "right";
 				break;
 
 			case 39:
+			case "right":
 				dir = "right";
 				opp = "left";
 				break;
 
 			case 40:
+			case "down":
 				dir = "down";
 				opp = "up";
 				break;
@@ -158,6 +162,19 @@
 			}
 
 			e.preventDefault();
+		});
+
+		$('.control-btn').click(function() {
+			var dir = $(this).attr('id');
+			that.setDir(dir);
+		});
+
+		$('#snake_canvas').click(function() {
+			if (that.paused && !that.lost) {
+				that.intervalID = setInterval(that.tick.bind(that), 120);
+				that.paused = false;
+				$(".info").hide();
+			}
 		});
 
 		//this.intervalID = setInterval(this.tick.bind(this), 120);

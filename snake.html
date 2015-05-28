@@ -3,9 +3,17 @@
 	<title>Snake</title>
 </head>
 <body>
-	<canvas id="snake_canvas"></canvas>
-	<div class="info">
-		<p>Snake! Use the arrow keys to move. Don't run into your body. <br> Eat apples to grow! Press spacebar to play and pause.</p>
+	<div class='game-container'>
+		<canvas id="snake_canvas"></canvas>
+		<div class="info">
+			<p>Snake! Use the arrow keys to move. Don't run into your body. <br> Eat apples to grow! Press spacebar to play and pause.</p>
+		</div>
+		<div id="controls">
+			<div class="control-btn" id="left">LEFT</div>
+			<div class="control-btn" id="up">UP</div>
+			<div class="control-btn" id="down">DOWN</div>
+			<div class="control-btn" id="right">RIGHT</div>
+		</div>
 	</div>
 
 	<script src="http://ajax.googleapis.com/ajax/libs/jquery/2.1.1/jquery.min.js"></script>

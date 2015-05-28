@@ -1,6 +1,49 @@
+.game-container {
+    width: 484px;
+    height: auto;
+}
+
 #snake_canvas {
 	background-color: #9ACC99;
 	height:480px;
 	width:480px;
 	border: 2px solid black;
+    margin-bottom: 20px;
+}
+
+#controls {
+    width: 284px;
+    position: relative;
+    margin: 0px auto;
+}
+
+.control-btn {
+    height: 75px;
+    width: 75px;
+    background-color: gray;
+    position: absolute;
+    color: white;
+    font-size: 12px;
+    line-height: 75px;
+    display: table-cell;
+    text-align: center;
+    box-sizing: border-box;
+}
+
+#up {
+    left: 85px;
+}
+
+#down {
+    top: 80px;
+    left: 85px;
+}
+
+#left {
+    top: 40px;
+}
+
+#right {
+    top: 40px;
+    left: 170px;
 }
