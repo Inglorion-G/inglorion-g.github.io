@@ -1,0 +1,765 @@
+<!doctype html>
+<html lang="en-US">
+    <head>
+        <meta charset="utf-8" />
+        <title>Caterpillar - Eat the Leaf</title>
+        <style>
+            body {
+                font-family: 'Georgia', serif;
+                background: linear-gradient(135deg, #a8e6cf, #7fcdcd);
+                margin: 0;
+                padding: 20px;
+                display: flex;
+                gap: 30px;
+                min-height: 50vh;
+            }
+            
+            .game-container {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+            }
+
+            canvas {
+                border: 4px solid #4a5d23;
+                border-radius: 8px;
+                box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+                background: radial-gradient(ellipse at center, #5d7c3e 0%, #4a5d23 100%);
+            }
+
+            .controls {
+                background: rgba(255,255,255,0.9);
+                padding: 20px;
+                border-radius: 12px;
+                box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+                width: 280px;
+                margin-top: 20px;
+            }
+
+            .progress-container {
+                background: rgba(255,255,255,0.95);
+                padding: 15px;
+                border-radius: 8px;
+                margin-bottom: 20px;
+                text-align: center;
+            }
+
+            .progress-bar {
+                width: 100%;
+                height: 25px;
+                background: #e0e0e0;
+                border-radius: 15px;
+                overflow: hidden;
+                border: 2px solid #4a5d23;
+            }
+
+            .progress-fill {
+                height: 100%;
+                background: linear-gradient(90deg, #4CAF50, #2E7D32);
+                width: 0%;
+                transition: width 0.3s ease;
+                border-radius: 15px;
+            }
+
+            .stats {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 10px;
+                margin: 15px 0;
+                font-weight: bold;
+                color: #2c4011;
+            }
+
+            fieldset {
+                border: 2px solid #4a5d23;
+                border-radius: 8px;
+                padding: 15px;
+                margin-bottom: 15px;
+                background: rgba(255,255,255,0.5);
+            }
+
+            legend {
+                font-weight: bold;
+                color: #2c4011;
+                padding: 0 10px;
+            }
+
+            .game-status {
+                text-align: center;
+                font-size: 18px;
+                font-weight: bold;
+                margin: 10px 0;
+                min-height: 25px;
+            }
+
+            .won {
+                color: #2E7D32;
+                font-size: 24px;
+                animation: pulse 1s infinite;
+            }
+
+            .paused {
+                color: #FF9800;
+            }
+
+            @keyframes pulse {
+                0% { transform: scale(1); }
+                50% { transform: scale(1.05); }
+                100% { transform: scale(1); }
+            }
+
+            button {
+                background: linear-gradient(135deg, #4CAF50, #2E7D32);
+                color: white;
+                border: none;
+                padding: 12px 20px;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 16px;
+                font-weight: bold;
+                width: 100%;
+                margin: 10px 0;
+                transition: transform 0.2s;
+            }
+
+            button:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            }
+
+            .instructions {
+                background: rgba(255,255,255,0.8);
+                padding: 15px;
+                border-radius: 8px;
+                font-size: 14px;
+                line-height: 1.4;
+                color: #2c4011;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="game-container">
+            <canvas id="caterpillar" width="600" height="600">
+                Caterpillar Game
+            </canvas>
+        </div>
+
+        <div class="controls">
+            <div class="progress-container">
+                <h3 style="margin: 0 0 10px 0; color: #2c4011;">Leaf Progress</h3>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progress-fill"></div>
+                </div>
+                <div id="progress-text" style="margin-top: 8px; font-weight: bold;">0% Eaten</div>
+            </div>
+
+            <div class="game-status" id="game-status"></div>
+
+            <div class="stats">
+                <div>Speed:</div>
+                <div id="speed-display">Medium</div>
+                <div>Time:</div>
+                <div id="time-display">00:00</div>
+            </div>
+
+            <fieldset>
+                <legend>Speed Control</legend>
+                <div style="margin: 5px 0;">
+                    <input type="radio" id="speed_1" name="speed" value="1">
+                    <label for="speed_1">Slow</label>
+                </div>
+                <div style="margin: 5px 0;">
+                    <input type="radio" id="speed_2" name="speed" value="2" checked>
+                    <label for="speed_2">Medium</label>
+                </div>
+                <div style="margin: 5px 0;">
+                    <input type="radio" id="speed_3" name="speed" value="3">
+                    <label for="speed_3">Fast</label>
+                </div>
+            </fieldset>
+
+            <fieldset>
+                <legend>Game Control</legend>
+                <div style="margin: 10px 0;">
+                    <input type="checkbox" id="pause_1" name="pause">
+                    <label for="pause_1">Pause Game</label>
+                </div>
+            </fieldset>
+
+            <button id="restart_btn">New Leaf</button>
+
+            <div class="instructions">
+                <h4 style="margin: 0 0 10px 0;">How to Play:</h4>
+                <p><strong>Goal:</strong> Eat 95% of the leaf to win!</p>
+                <p><strong>Controls:</strong> Hold A/D or Left/Right arrows to steer</p>
+                <p><strong>Tip:</strong> The caterpillar moves forward automatically and turns smoothly</p>
+            </div>
+        </div>
+
+        <script type="application/javascript">
+            class CaterpillarSegment {
+                constructor(id, pos, lastSegment, nextSegment) {
+                    this.id = id;
+                    this.pos = [...pos];
+                    this.path = [];
+                    this.nextSegment = nextSegment;
+                    this.lastSegment = lastSegment;
+                }
+
+                setNextSegment(segment) {
+                    this.nextSegment = segment;
+                }
+
+                addToPath(pos) {
+                    this.path.push([...pos]);
+                    // Limit path length to prevent memory issues
+                    if (this.path.length > 100) {
+                        this.path.shift();
+                    }
+                }
+
+                move() {
+                    if (this.path.length > 0) {
+                        let curPos = [...this.pos];
+                        if (this.nextSegment) {
+                            this.nextSegment.addToPath(curPos);
+                        }
+                        this.pos = this.path.shift();
+                    }
+                }
+            }
+
+            class Caterpillar {
+                constructor(pos, segmentCount, game) {
+                    this.segments = [];
+                    this.pos = [...pos];
+                    this.segmentCount = segmentCount;
+                    this.head = undefined;
+                    this.game = game;
+                    this.direction = [1, 0];
+                    this.segmentSize = 15;
+                    this.segmentSpacing = 12;
+                    this.angle = 0;
+                    this.turnSpeed = 0.1; // radians per move
+
+                    this.initCaterpillar();
+                }
+
+                initCaterpillar() {
+                    // Create head
+                    const head = new CaterpillarSegment(0, [...this.pos]);
+                    this.head = head;
+                    this.segments.push(head);
+
+                    // Create body segments
+                    let lastSegment = head;
+                    for (let i = 1; i < this.segmentCount; i++) {
+                        let segmentPos = [
+                            this.pos[0] - (i * this.segmentSpacing),
+                            this.pos[1]
+                        ];
+
+                        let newSegment = new CaterpillarSegment(i, segmentPos, lastSegment);
+                        
+                        // Initialize path for following
+                        this.initSegmentPath(newSegment, segmentPos);
+                        
+                        this.segments.push(newSegment);
+                        lastSegment.setNextSegment(newSegment);
+                        lastSegment = newSegment;
+                    }
+                }
+
+                initSegmentPath(segment, segmentPos) {
+                    // Create initial path for segment to follow
+                    for (let j = 0; j < this.segmentSize; j += this.game.moveSpeed) {
+                        segment.path.push([
+                            segmentPos[0] + j,
+                            segmentPos[1]
+                        ]);
+                    }
+                }
+
+                moveHead() {
+                    let curPos = [...this.head.pos];
+                    
+                    // Pass current position to next segment
+                    if (this.head.nextSegment) {
+                        this.head.nextSegment.addToPath(curPos);
+                    }
+
+                    // Update direction based on current angle
+                    this.direction[0] = Math.cos(this.angle);
+                    this.direction[1] = Math.sin(this.angle);
+
+                    // Calculate new head position
+                    let nextPosX = curPos[0] + this.game.moveSpeed * this.direction[0];
+                    let nextPosY = curPos[1] + this.game.moveSpeed * this.direction[1];
+
+                    // Boundary wrapping
+                    if (nextPosX < 0) {
+                        nextPosX = this.game.canvasSize - 1;
+                    } else {
+                        nextPosX = nextPosX % this.game.canvasSize;
+                    }
+
+                    if (nextPosY < 0) {
+                        nextPosY = this.game.canvasSize - 1;
+                    } else {
+                        nextPosY = nextPosY % this.game.canvasSize;
+                    }
+
+                    this.head.pos[0] = nextPosX;
+                    this.head.pos[1] = nextPosY;
+                }
+
+                turn(direction) {
+                    // direction: -1 for left, 1 for right
+                    this.angle += direction * this.turnSpeed;
+                    
+                    // Keep angle in reasonable range (optional)
+                    if (this.angle > Math.PI * 2) {
+                        this.angle -= Math.PI * 2;
+                    } else if (this.angle < -Math.PI * 2) {
+                        this.angle += Math.PI * 2;
+                    }
+                }
+
+                move() {
+                    this.moveHead();
+                    
+                    // Move all body segments
+                    for (let i = 1; i < this.segments.length; i++) {
+                        this.segments[i].move();
+                    }
+                }
+            }
+
+            class CaterpillarGame {
+                constructor(canvasId) {
+                    this.canvas = document.getElementById(canvasId);
+                    this.ctx = this.canvas.getContext("2d");
+                    this.canvasSize = 600;
+
+                    // Game settings
+                    this.lastTime = 0;
+                    this.baseSpeed = 60; // milliseconds between moves
+                    this.speedMultiplier = 2;
+                    this.moveSpeed = 3; // pixels per move
+                    this.winThreshold = 95;
+
+                    this.keys = {
+                        left: false,
+                        right: false
+                    };
+                    
+                    // Leaf consumption settings
+                    this.consumeSize = 8; // Size of each consumable leaf piece
+                    this.eatRadius = 2; // How many pieces eaten around caterpillar
+                    
+                    // Game state
+                    this.gameState = 'playing';
+                    this.startTime = Date.now();
+                    this.endTime = null;
+                    
+                    this.initGame();
+                }
+
+                initGame() {
+                    // Create caterpillar
+                    this.caterpillar = new Caterpillar([100, 300], 8, this);
+                    
+                    // Initialize leaf
+                    this.initLeaf();
+                    
+                    // Reset stats
+                    this.startTime = Date.now();
+                    this.endTime = null;
+                    this.gameState = 'playing';
+                    this.updateDisplay();
+                }
+
+                initLeaf() {
+                    this.leafData = [];
+                    this.totalLeafPieces = 0;
+                    
+                    // Create 2D array for leaf consumption
+                    const gridWidth = Math.ceil(this.canvasSize / this.consumeSize);
+                    const gridHeight = Math.ceil(this.canvasSize / this.consumeSize);
+                    
+                    for (let x = 0; x < gridWidth; x++) {
+                        this.leafData.push([]);
+                        for (let y = 0; y < gridHeight; y++) {
+                            this.leafData[x].push(true); // true = leaf exists
+                            this.totalLeafPieces++;
+                        }
+                    }
+                }
+
+                init() {
+                    // Event listeners
+                    window.addEventListener('keydown', this.handleKeyDown.bind(this));
+                    window.addEventListener('keyup', this.handleKeyUp.bind(this));
+                    document.getElementById('speed_selector') && document.getElementById('speed_selector').addEventListener('change', this.handleSpeedSelect.bind(this));
+                    document.querySelectorAll('input[name="speed"]').forEach(radio => {
+                        radio.addEventListener('change', this.handleSpeedSelect.bind(this));
+                    });
+                    document.getElementById('pause_1').addEventListener('change', this.handlePauseSelect.bind(this));
+                    document.getElementById('restart_btn').addEventListener('click', this.restart.bind(this));
+                    
+                    // Start game loop
+                    requestAnimationFrame(this.gameLoop.bind(this));
+                }
+
+                gameLoop(currentTime) {
+                    // Always draw
+                    this.draw();
+                    
+                    // Update game logic when playing and enough time has passed
+                    if (this.gameState === 'playing' && 
+                        currentTime - this.lastTime >= this.baseSpeed / this.speedMultiplier) {
+                        this.update();
+                        this.lastTime = currentTime;
+                    }
+                    
+                    // Update display periodically
+                    this.updateDisplay();
+                    
+                    requestAnimationFrame(this.gameLoop.bind(this));
+                }
+
+                update() {
+                    // Handle continuous turning based on key states
+                    if (this.keys.left) {
+                        this.caterpillar.turn(-1); // Turn left
+                    }
+                    if (this.keys.right) {
+                        this.caterpillar.turn(1);  // Turn right
+                    }
+
+                    // Move caterpillar
+                    this.caterpillar.move();
+                    
+                    // Consume leaf around caterpillar head
+                    this.consumeLeaf(this.caterpillar.head.pos[0], this.caterpillar.head.pos[1]);
+                    
+                    // Check win condition
+                    this.checkWinCondition();
+                }
+
+                consumeLeaf(x, y) {
+                    // Convert pixel coordinates to leaf grid
+                    const leafX = Math.floor(x / this.consumeSize);
+                    const leafY = Math.floor(y / this.consumeSize);
+                    
+                    // Consume area around caterpillar head
+                    for (let dx = -this.eatRadius; dx <= this.eatRadius; dx++) {
+                        for (let dy = -this.eatRadius; dy <= this.eatRadius; dy++) {
+                            const targetX = leafX + dx;
+                            const targetY = leafY + dy;
+                            
+                            // Check if position is valid and has leaf
+                            if (this.isValidLeafPosition(targetX, targetY) && 
+                                this.leafData[targetX][targetY]) {
+                                
+                                // Add some randomness to make eating look more natural
+                                if (Math.random() < 0.7) {
+                                    this.leafData[targetX][targetY] = false;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                isValidLeafPosition(x, y) {
+                    return x >= 0 && x < this.leafData.length && 
+                           y >= 0 && y < this.leafData[0].length;
+                }
+
+                checkWinCondition() {
+                    const percentageEaten = this.getPercentageEaten();
+                    
+                    if (percentageEaten >= this.winThreshold && this.gameState === 'playing') {
+                        this.gameState = 'won';
+                        this.endTime = Date.now();
+                        this.updateDisplay();
+                    }
+                }
+
+                getPercentageEaten() {
+                    let remainingLeaf = 0;
+                    
+                    for (let x = 0; x < this.leafData.length; x++) {
+                        for (let y = 0; y < this.leafData[x].length; y++) {
+                            if (this.leafData[x][y]) {
+                                remainingLeaf++;
+                            }
+                        }
+                    }
+                    
+                    return ((this.totalLeafPieces - remainingLeaf) / this.totalLeafPieces) * 100;
+                }
+
+                draw() {
+                    // Clear canvas
+                    this.ctx.clearRect(0, 0, this.canvasSize, this.canvasSize);
+                    
+                    // Draw leaf background
+                    this.drawLeaf();
+                    
+                    // Draw caterpillar
+                    this.drawCaterpillar();
+                }
+
+                drawLeaf() {
+                    // Create leaf texture pattern
+                    for (let x = 0; x < this.leafData.length; x++) {
+                        for (let y = 0; y < this.leafData[x].length; y++) {
+                            if (this.leafData[x][y]) {
+                                const pixelX = x * this.consumeSize;
+                                const pixelY = y * this.consumeSize;
+                                
+                                // Vary leaf color slightly for texture
+                                const variation = Math.sin(x * 0.1) * Math.cos(y * 0.1) * 20;
+                                const green = Math.floor(120 + variation);
+                                const darkGreen = Math.floor(80 + variation);
+                                
+                                this.ctx.fillStyle = `rgb(${darkGreen}, ${green}, ${darkGreen})`;
+                                this.ctx.fillRect(pixelX, pixelY, this.consumeSize, this.consumeSize);
+                                
+                                // Add subtle leaf vein pattern
+                                if ((x + y) % 8 === 0) {
+                                    this.ctx.fillStyle = `rgba(100, 140, 100, 0.3)`;
+                                    this.ctx.fillRect(pixelX, pixelY, this.consumeSize, 1);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                drawCaterpillar() {
+                    this.caterpillar.segments.forEach((segment, index) => {
+                        const x = segment.pos[0];
+                        const y = segment.pos[1];
+                        const size = this.caterpillar.segmentSize;
+                        
+                        if (index === 0) {
+                            // Draw head - distinctive orange/black
+                            this.ctx.fillStyle = '#FF8C00'; // Dark orange head
+                            this.ctx.beginPath();
+                            this.ctx.arc(x, y, size * 0.8, 0, 2 * Math.PI);
+                            this.ctx.fill();
+                            
+                            // Head border
+                            this.ctx.strokeStyle = '#8B4513'; // Brown border
+                            this.ctx.lineWidth = 2;
+                            this.ctx.stroke();
+                            
+                            // Calculate head direction for antennae positioning
+                            const headAngle = this.caterpillar.angle;
+                            const antennaLength = 15;
+                            const antennaSpread = 0.4; // radians (about 23 degrees)
+                            
+                            // Left antenna
+                            const leftAntennaAngle = headAngle - antennaSpread;
+                            const leftAntennaEndX = x + Math.cos(leftAntennaAngle) * antennaLength;
+                            const leftAntennaEndY = y + Math.sin(leftAntennaAngle) * antennaLength;
+                            
+                            // Right antenna
+                            const rightAntennaAngle = headAngle + antennaSpread;
+                            const rightAntennaEndX = x + Math.cos(rightAntennaAngle) * antennaLength;
+                            const rightAntennaEndY = y + Math.sin(rightAntennaAngle) * antennaLength;
+                            
+                            // Draw antennae lines
+                            this.ctx.strokeStyle = '#000000';
+                            this.ctx.lineWidth = 2;
+                            this.ctx.beginPath();
+                            this.ctx.moveTo(x, y);
+                            this.ctx.lineTo(leftAntennaEndX, leftAntennaEndY);
+                            this.ctx.moveTo(x, y);
+                            this.ctx.lineTo(rightAntennaEndX, rightAntennaEndY);
+                            this.ctx.stroke();
+                            
+                            // Draw antennae tips (small circles)
+                            this.ctx.fillStyle = '#000000';
+                            this.ctx.beginPath();
+                            this.ctx.arc(leftAntennaEndX, leftAntennaEndY, 1.5, 0, 2 * Math.PI);
+                            this.ctx.arc(rightAntennaEndX, rightAntennaEndY, 1.5, 0, 2 * Math.PI);
+                            this.ctx.fill();
+                            
+                            // Eyes - black dots positioned relative to head direction
+                            const eyeOffset = 3;
+                            const eyeAngle1 = headAngle - 0.3;
+                            const eyeAngle2 = headAngle + 0.3;
+                            
+                            const eye1X = x + Math.cos(eyeAngle1) * eyeOffset;
+                            const eye1Y = y + Math.sin(eyeAngle1) * eyeOffset;
+                            const eye2X = x + Math.cos(eyeAngle2) * eyeOffset;
+                            const eye2Y = y + Math.sin(eyeAngle2) * eyeOffset;
+                            
+                            this.ctx.fillStyle = '#000000';
+                            this.ctx.beginPath();
+                            this.ctx.arc(eye1X, eye1Y, 2, 0, 2 * Math.PI);
+                            this.ctx.arc(eye2X, eye2Y, 2, 0, 2 * Math.PI);
+                            this.ctx.fill();
+                            
+                        } else {
+                            // Draw body segments with alternating colors
+                            const bodySize = size * (0.9 - index * 0.05); // Gradually smaller
+                            
+                            // Create pattern: orange, yellow, black stripes
+                            const colorIndex = index % 3;
+                            if (colorIndex === 1) {
+                                this.ctx.fillStyle = '#FFA500'; // Orange
+                            } else if (colorIndex === 2) {
+                                this.ctx.fillStyle = '#FFD700'; // Gold/Yellow
+                            } else {
+                                this.ctx.fillStyle = '#2F2F2F'; // Dark gray/black
+                            }
+                            
+                            this.ctx.beginPath();
+                            this.ctx.arc(x, y, bodySize, 0, 2 * Math.PI);
+                            this.ctx.fill();
+                            
+                            // Body segment border - darker version of fill color
+                            if (colorIndex === 1) {
+                                this.ctx.strokeStyle = '#FF8C00'; // Darker orange
+                            } else if (colorIndex === 2) {
+                                this.ctx.strokeStyle = '#DAA520'; // Darker gold
+                            } else {
+                                this.ctx.strokeStyle = '#000000'; // Black
+                            }
+                            this.ctx.lineWidth = 1;
+                            this.ctx.stroke();
+                        }
+                    });
+                }
+
+                changeDirection(newDirection) {
+                    // Smooth direction changes for natural movement
+                    const currentDir = this.caterpillar.direction;
+                    
+                    // Blend new direction with current for smoother turns
+                    this.caterpillar.direction[0] = currentDir[0] * 0.7 + newDirection[0] * 0.3;
+                    this.caterpillar.direction[1] = currentDir[1] * 0.7 + newDirection[1] * 0.3;
+                    
+                    // Normalize direction vector
+                    const length = Math.sqrt(
+                        this.caterpillar.direction[0] ** 2 + this.caterpillar.direction[1] ** 2
+                    );
+                    
+                    if (length > 0) {
+                        this.caterpillar.direction[0] /= length;
+                        this.caterpillar.direction[1] /= length;
+                    }
+                }
+
+                handleKeyDown(e) {
+                    if (this.gameState !== 'playing' && e.key !== ' ') return;
+                    
+                    const key = e.key.toLowerCase();
+                    
+                    switch (key) {
+                        case 'arrowleft':
+                        case 'a':
+                            this.keys.left = true;
+                            e.preventDefault();
+                            break;
+                        case 'arrowright':
+                        case 'd':
+                            this.keys.right = true;
+                            e.preventDefault();
+                            break;
+                        case ' ':
+                            this.togglePause();
+                            e.preventDefault();
+                            break;
+                    }
+                }
+
+                handleKeyUp(e) {
+                    const key = e.key.toLowerCase();
+                    
+                    switch (key) {
+                        case 'arrowleft':
+                        case 'a':
+                            this.keys.left = false;
+                            e.preventDefault();
+                            break;
+                        case 'arrowright':
+                        case 'd':
+                            this.keys.right = false;
+                            e.preventDefault();
+                            break;
+                    }
+                }
+
+                handleSpeedSelect(e) {
+                    this.speedMultiplier = parseInt(e.target.value);
+                    this.updateDisplay();
+                }
+
+                handlePauseSelect(e) {
+                    if (e.target.checked) {
+                        this.gameState = 'paused';
+                    } else if (this.gameState === 'paused') {
+                        this.gameState = 'playing';
+                    }
+                    this.updateDisplay();
+                }
+
+                togglePause() {
+                    if (this.gameState === 'playing') {
+                        this.gameState = 'paused';
+                        document.getElementById('pause_1').checked = true;
+                    } else if (this.gameState === 'paused') {
+                        this.gameState = 'playing';
+                        document.getElementById('pause_1').checked = false;
+                    }
+                    this.updateDisplay();
+                }
+
+                restart() {
+                    this.initGame();
+                    document.getElementById('pause_1').checked = false;
+                }
+
+                updateDisplay() {
+                    // Update progress
+                    const percentage = this.getPercentageEaten();
+                    document.getElementById('progress-fill').style.width = percentage + '%';
+                    document.getElementById('progress-text').textContent = Math.floor(percentage) + '% Eaten';
+                    
+                    // Update speed display
+                    const speedNames = {1: 'Slow', 2: 'Medium', 3: 'Fast'};
+                    document.getElementById('speed-display').textContent = speedNames[this.speedMultiplier] || 'Medium';
+                    
+                    // Update time
+                    const currentTime = this.endTime || Date.now(); // Use end time if game is over
+                    const elapsed = Math.floor((currentTime - this.startTime) / 1000);
+                    const minutes = Math.floor(elapsed / 60);
+                    const seconds = elapsed % 60;
+                    document.getElementById('time-display').textContent = 
+                        `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                    
+                    // Update game status
+                    const statusEl = document.getElementById('game-status');
+                    switch (this.gameState) {
+                        case 'paused':
+                            statusEl.innerHTML = '<div class="paused">PAUSED</div>';
+                            break;
+                        case 'won':
+                            statusEl.innerHTML = '<div class="won">🎉 LEAF EATEN! 🎉</div>';
+                            break;
+                        default:
+                            statusEl.innerHTML = '';
+                    }
+                }
+            }
+
+            // Start the game
+            const game = new CaterpillarGame("caterpillar");
+            game.init();
+        </script>
+    </body>
+</html>
