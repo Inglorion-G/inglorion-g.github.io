@@ -194,6 +194,60 @@ canvas.addEventListener('mouseleave', () => {
     isAiming = false;
 });
 
+// Touch support for mobile
+canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    const touch = e.touches[0];
+    const rect = canvas.getBoundingClientRect();
+    const touchX = touch.clientX - rect.left;
+    const touchY = touch.clientY - rect.top;
+
+    if (gameState !== 'playing') {
+        resetGame();
+        return;
+    }
+
+    if (areBallsMoving()) return;
+
+    const dx = touchX - cueBall.x;
+    const dy = touchY - cueBall.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (dist <= cueBall.radius * 2) {
+        isAiming = true;
+        aimStart = { x: cueBall.x, y: cueBall.y };
+        aimEnd = { x: touchX, y: touchY };
+    }
+});
+
+canvas.addEventListener('touchmove', (e) => {
+    if (!isAiming) return;
+    e.preventDefault();
+    const touch = e.touches[0];
+    const rect = canvas.getBoundingClientRect();
+    aimEnd = {
+        x: touch.clientX - rect.left,
+        y: touch.clientY - rect.top
+    };
+});
+
+canvas.addEventListener('touchend', (e) => {
+    if (!isAiming) return;
+    e.preventDefault();
+
+    const dx = aimStart.x - aimEnd.x;
+    const dy = aimStart.y - aimEnd.y;
+    const power = Math.min(Math.sqrt(dx * dx + dy * dy) * POWER_SCALE, MAX_POWER);
+
+    if (power > 0.5) {
+        const angle = Math.atan2(dy, dx);
+        cueBall.vx = Math.cos(angle) * power;
+        cueBall.vy = Math.sin(angle) * power;
+    }
+
+    isAiming = false;
+});
+
 // Check if any balls are still moving
 function areBallsMoving() {
     return balls.some(ball => ball.active && ball.isMoving());
