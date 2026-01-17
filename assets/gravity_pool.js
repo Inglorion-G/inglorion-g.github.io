@@ -219,7 +219,8 @@ canvas.addEventListener('touchstart', (e) => {
     const dy = touchY - cueBall.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
 
-    if (dist <= cueBall.radius * 2) {
+    // Larger touch target for mobile (4x radius vs 2x for mouse)
+    if (dist <= cueBall.radius * 4) {
         isAiming = true;
         aimStart = { x: cueBall.x, y: cueBall.y };
         aimEnd = { x: touchX, y: touchY };
