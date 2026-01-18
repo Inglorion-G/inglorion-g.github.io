@@ -14,6 +14,12 @@
             min-height: 100vh;
             background: #1a1a2e;
         }
+        #gameContainer {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            position: relative;
+        }
         canvas {
             border: 8px solid #4a2c0a;
             border-radius: 4px;
@@ -21,10 +27,122 @@
             max-width: calc(100vw - 20px);
             max-height: calc(100vh - 20px);
         }
+        #controls {
+            margin-top: 10px;
+            color: #ffffff;
+            font-family: Arial, sans-serif;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        #controls label {
+            cursor: pointer;
+        }
+        .friction-control {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+        }
+        .friction-control input[type="range"] {
+            width: 100px;
+        }
+        .friction-control .value {
+            min-width: 45px;
+            text-align: right;
+        }
+        #modeSelector {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            padding: 30px 40px;
+            border-radius: 10px;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
+            z-index: 10;
+        }
+        #modeSelector.visible {
+            display: flex;
+        }
+        #modeSelector h2 {
+            color: #ffffff;
+            font-family: Arial, sans-serif;
+            margin: 0 0 10px 0;
+        }
+        #modeSelector button {
+            width: 150px;
+            padding: 12px 20px;
+            font-size: 16px;
+            font-family: Arial, sans-serif;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            background: #4a90d9;
+            color: #ffffff;
+            transition: background 0.2s;
+        }
+        #modeSelector button:hover {
+            background: #357abd;
+        }
+        #restartBtn {
+            padding: 8px 16px;
+            font-size: 14px;
+            font-family: Arial, sans-serif;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            background: #4a90d9;
+            color: #ffffff;
+            transition: background 0.2s;
+        }
+        #restartBtn:hover {
+            background: #357abd;
+        }
     </style>
 </head>
 <body>
-    <canvas id="gameCanvas"></canvas>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+        <div id="controls">
+            <button id="restartBtn">Restart Game</button>
+            <label>
+                <input type="checkbox" id="gravityToggle">
+                Gravity Mode
+            </label>
+            <div class="friction-control" style="display: none;">
+                <label for="frictionHigh">High Speed:</label>
+                <input type="range" id="frictionHigh" min="0.95" max="0.999" step="0.001" value="0.990">
+                <span class="value" id="frictionHighValue">0.990</span>
+            </div>
+            <div class="friction-control" style="display: none;">
+                <label for="frictionLow">Low Speed:</label>
+                <input type="range" id="frictionLow" min="0.85" max="0.99" step="0.001" value="0.950">
+                <span class="value" id="frictionLowValue">0.950</span>
+            </div>
+            <div class="friction-control" style="display: none;">
+                <label for="maxPower">Max Power:</label>
+                <input type="range" id="maxPower" min="5" max="50" step="1" value="30">
+                <span class="value" id="maxPowerValue">30</span>
+            </div>
+            <div class="friction-control" style="display: none;">
+                <label for="powerScale">Power Scale:</label>
+                <input type="range" id="powerScale" min="0.05" max="0.3" step="0.01" value="0.15">
+                <span class="value" id="powerScaleValue">0.15</span>
+            </div>
+        </div>
+        <div id="modeSelector">
+            <h2>Select Game Mode</h2>
+            <button data-mode="freePlay">Free Play</button>
+            <button data-mode="eightBall">8-Ball</button>
+            <button data-mode="nineBall">9-Ball</button>
+        </div>
+    </div>
     <script src="./assets/gravity_pool.js"></script>
 </body>
 </html>
