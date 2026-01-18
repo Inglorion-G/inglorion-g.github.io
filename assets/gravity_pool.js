@@ -1520,4 +1520,12 @@ function gameLoop(timestamp) {
 
 // Start the game
 document.getElementById('modeSelector').classList.add('visible');
+
+// Handle orientation changes on mobile
+window.addEventListener('orientationchange', () => {
+    setTimeout(() => {
+        window.scrollTo(0, 0);
+    }, 100);
+});
+
 requestAnimationFrame(gameLoop);
