@@ -51,11 +51,17 @@ for (let py = -BALL_RADIUS; py <= BALL_RADIUS; py++) {
         }
     }
 }
-const stripeOffscreen = document.createElement('canvas');
-stripeOffscreen.width = STRIPE_SIZE;
-stripeOffscreen.height = STRIPE_SIZE;
-const stripeOCtx = stripeOffscreen.getContext('2d');
-const stripeImageData = stripeOCtx.createImageData(STRIPE_SIZE, STRIPE_SIZE);
+// Per-ball offscreen canvases to avoid mobile GPU texture caching issues
+const stripeCanvases = [];
+const stripeCtxs = [];
+for (let i = 0; i < 7; i++) {
+    const c = document.createElement('canvas');
+    c.width = STRIPE_SIZE;
+    c.height = STRIPE_SIZE;
+    stripeCanvases.push(c);
+    stripeCtxs.push(c.getContext('2d'));
+}
+const stripeImageData = stripeCtxs[0].createImageData(STRIPE_SIZE, STRIPE_SIZE);
 const BAND_HALF = 0.4; // fraction of sphere: |bodyZ| < this = stripe region
 
 // Table bounds (play area inside cushions)
@@ -1319,14 +1325,15 @@ function drawBall(ball) {
             }
             data[idx + 3] = 255;
         }
-        stripeOCtx.putImageData(stripeImageData, 0, 0);
+        const sci = ball.label - 9;
+        stripeCtxs[sci].putImageData(stripeImageData, 0, 0);
 
         // Draw with anti-aliased circle clip
         ctx.save();
         ctx.beginPath();
         ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
         ctx.clip();
-        ctx.drawImage(stripeOffscreen, ball.x - BALL_RADIUS, ball.y - BALL_RADIUS);
+        ctx.drawImage(stripeCanvases[sci], ball.x - BALL_RADIUS, ball.y - BALL_RADIUS);
         ctx.restore();
     } else {
         // Solid ball body
