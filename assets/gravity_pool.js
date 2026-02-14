@@ -3,14 +3,13 @@ const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
 // Table dimensions
-const TABLE_WIDTH = 800;
-const TABLE_HEIGHT = 450;
+const TABLE_WIDTH = 818;
+const TABLE_HEIGHT = 468;
 canvas.width = TABLE_WIDTH;
 canvas.height = TABLE_HEIGHT;
 
 // Physics constants
 const BALL_RADIUS = 12;
-const POCKET_RADIUS = 30;
 const GRAVITY_STRENGTH = 50000;
 let FRICTION_HIGH = 0.990;        // Friction at high speed (less friction)
 let FRICTION_LOW = 0.950;         // Friction at low speed (more friction)
@@ -39,8 +38,29 @@ const BALL_COLORS = {
     15: '#800000'  // maroon stripe
 };
 
+// Pre-computed sphere pixel normals for per-pixel stripe rendering
+const SPHERE_PIXELS = [];
+const STRIPE_SIZE = BALL_RADIUS * 2 + 1;
+for (let py = -BALL_RADIUS; py <= BALL_RADIUS; py++) {
+    for (let px = -BALL_RADIUS; px <= BALL_RADIUS; px++) {
+        if (px * px + py * py <= BALL_RADIUS * BALL_RADIUS) {
+            const nx = px / BALL_RADIUS;
+            const ny = py / BALL_RADIUS;
+            const nz = Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny));
+            SPHERE_PIXELS.push({ px, py, nx, ny, nz });
+        }
+    }
+}
+const stripeOffscreen = document.createElement('canvas');
+stripeOffscreen.width = STRIPE_SIZE;
+stripeOffscreen.height = STRIPE_SIZE;
+const stripeOCtx = stripeOffscreen.getContext('2d');
+const stripeImageData = stripeOCtx.createImageData(STRIPE_SIZE, STRIPE_SIZE);
+const BAND_HALF = 0.4; // fraction of sphere: |bodyZ| < this = stripe region
+
 // Table bounds (play area inside cushions)
-const CUSHION = 20;
+const BORDER = 27;         // Wooden frame width (canvas edge to rail surface)
+const CUSHION = 45;        // Total border: canvas edge to play surface (BORDER + cushion depth)
 const BOUNDS = {
     left: CUSHION + BALL_RADIUS,
     right: TABLE_WIDTH - CUSHION - BALL_RADIUS,
@@ -50,15 +70,66 @@ const BOUNDS = {
 
 const KITCHEN_LINE = TABLE_WIDTH * 0.25;  // Right edge of the kitchen (behind the head string)
 
-// Pocket positions (6 pockets)
-const POCKETS = [
-    { x: CUSHION, y: CUSHION },                           // top-left
-    { x: TABLE_WIDTH / 2, y: CUSHION - 5 },               // top-middle
-    { x: TABLE_WIDTH - CUSHION, y: CUSHION },             // top-right
-    { x: CUSHION, y: TABLE_HEIGHT - CUSHION },            // bottom-left
-    { x: TABLE_WIDTH / 2, y: TABLE_HEIGHT - CUSHION + 5 },// bottom-middle
-    { x: TABLE_WIDTH - CUSHION, y: TABLE_HEIGHT - CUSHION }// bottom-right
+// 6 rail polygons (trapezoids). Each has inner edge (play-side) and outer edge (wood-side).
+// Vertex layout: A=inner[0], B=inner[1], C=outer[0], D=outer[1]
+const RAILS = [
+    // Top-left rail (corner pocket to side pocket)
+    { inner: [{x:76,y:45}, {x:379,y:45}], outer: [{x:387,y:27}, {x:58,y:27}] },
+    // Top-right rail (side pocket to corner pocket)
+    { inner: [{x:439,y:45}, {x:742,y:45}], outer: [{x:760,y:27}, {x:431,y:27}] },
+    // Bottom-left rail
+    { inner: [{x:76,y:423}, {x:379,y:423}], outer: [{x:387,y:441}, {x:58,y:441}] },
+    // Bottom-right rail
+    { inner: [{x:439,y:423}, {x:742,y:423}], outer: [{x:760,y:441}, {x:431,y:441}] },
+    // Left rail
+    { inner: [{x:45,y:74}, {x:45,y:394}], outer: [{x:27,y:410}, {x:27,y:58}] },
+    // Right rail
+    { inner: [{x:773,y:74}, {x:773,y:394}], outer: [{x:791,y:410}, {x:791,y:58}] },
 ];
+
+// Build collision segments from rail polygons (3 per rail = 18 total)
+const TABLE_CENTER = { x: TABLE_WIDTH / 2, y: TABLE_HEIGHT / 2 };
+const COLLISION_SEGMENTS = [];
+for (const rail of RAILS) {
+    const A = rail.inner[0], B = rail.inner[1];
+    const C = rail.outer[0], D = rail.outer[1];
+    const edges = [
+        [A, B],  // main inner face
+        [B, C],  // right jaw face
+        [D, A],  // left jaw face
+    ];
+    for (const [p1, p2] of edges) {
+        const dx = p2.x - p1.x, dy = p2.y - p1.y;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        // Two candidate normals
+        const n1x = dy / len, n1y = -dx / len;
+        const n2x = -dy / len, n2y = dx / len;
+        // Pick the one pointing toward table center
+        const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
+        const toCenterX = TABLE_CENTER.x - mx, toCenterY = TABLE_CENTER.y - my;
+        const dot1 = n1x * toCenterX + n1y * toCenterY;
+        const nx = dot1 > 0 ? n1x : n2x;
+        const ny = dot1 > 0 ? n1y : n2y;
+        COLLISION_SEGMENTS.push({ x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, nx, ny });
+    }
+}
+
+// Pocket positions with jaw geometry for mouth-line detection
+// x,y = circle center for drawing; radius = pocket circle size
+const POCKETS = [
+    { jaw1: {x:76,y:45},   jaw2: {x:45,y:74},   x: BORDER + 14,                y: BORDER + 14,                 radius: 20 },  // top-left
+    { jaw1: {x:379,y:45},  jaw2: {x:439,y:45},  x: TABLE_WIDTH / 2,           y: BORDER,                      radius: 22 },  // top-center
+    { jaw1: {x:773,y:74},  jaw2: {x:742,y:45},  x: TABLE_WIDTH - BORDER - 14, y: BORDER + 14,                 radius: 20 },  // top-right
+    { jaw1: {x:45,y:394},  jaw2: {x:76,y:423},  x: BORDER + 14,                y: TABLE_HEIGHT - BORDER - 14,  radius: 20 },  // bottom-left
+    { jaw1: {x:439,y:423}, jaw2: {x:379,y:423}, x: TABLE_WIDTH / 2,           y: TABLE_HEIGHT - BORDER,       radius: 22 },  // bottom-center
+    { jaw1: {x:742,y:423}, jaw2: {x:773,y:394}, x: TABLE_WIDTH - BORDER - 14, y: TABLE_HEIGHT - BORDER - 14,  radius: 20 },  // bottom-right
+];
+// Compute crossSign for each pocket (which side of mouth line is "in the pocket")
+for (const p of POCKETS) {
+    const mx = p.jaw2.x - p.jaw1.x, my = p.jaw2.y - p.jaw1.y;
+    const cross = mx * (p.y - p.jaw1.y) - my * (p.x - p.jaw1.x);
+    p.crossSign = Math.sign(cross);
+}
 
 // Gravity well (center of table)
 const GRAVITY_WELL = {
@@ -103,11 +174,74 @@ class Ball {
         this.label = label;
         this.isStripe = isStripe;
         this.active = true;
+        // 3x3 rotation matrix (column-major flat array) for rolling animation
+        // | R[0] R[3] R[6] |   Column 2 (R[6],R[7],R[8]) = north pole (number label)
+        // | R[1] R[4] R[7] |   R[8] > 0 means label faces camera
+        // | R[2] R[5] R[8] |   Identity = number centered, stripe horizontal
+        this.orientation = [1, 0, 0, 0, 1, 0, 0, 0, 1];
     }
 
     isMoving() {
         return Math.abs(this.vx) > MIN_VELOCITY || Math.abs(this.vy) > MIN_VELOCITY;
     }
+}
+
+// Apply rolling rotation to ball orientation based on displacement
+// Uses Rodrigues' rotation formula with axis always in the table plane (kz=0)
+function updateBallOrientation(ball, dx, dy) {
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < 0.001) return;
+
+    const theta = dist / ball.radius; // rolling without slipping
+    const kx = -dy / dist;  // rotation axis perpendicular to displacement
+    const ky = dx / dist;
+
+    const sinT = Math.sin(theta);
+    const cosT = Math.cos(theta);
+    const omCosT = 1 - cosT;
+
+    // Rodrigues': R_new = R + sin(θ)·K·R + (1-cos(θ))·K²·R
+    // With kz=0: K·col = (ky·r2, -kx·r2, -ky·r0 + kx·r1)
+    // K²·col = (-ky²·r0 + kx·ky·r1, kx·ky·r0 - kx²·r1, -r2)
+    const R = ball.orientation;
+    const newR = new Array(9);
+
+    for (let col = 0; col < 3; col++) {
+        const c = col * 3;
+        const r0 = R[c], r1 = R[c + 1], r2 = R[c + 2];
+
+        const kr0 = ky * r2;
+        const kr1 = -kx * r2;
+        const kr2 = -ky * r0 + kx * r1;
+
+        const kkr0 = -ky * ky * r0 + kx * ky * r1;
+        const kkr1 = kx * ky * r0 - kx * kx * r1;
+        const kkr2 = -r2;
+
+        newR[c]     = r0 + sinT * kr0 + omCosT * kkr0;
+        newR[c + 1] = r1 + sinT * kr1 + omCosT * kkr1;
+        newR[c + 2] = r2 + sinT * kr2 + omCosT * kkr2;
+    }
+
+    ball.orientation = newR;
+}
+
+// Re-orthonormalize rotation matrix via Gram-Schmidt to prevent drift
+function reorthonormalize(R) {
+    // Normalize column 0
+    let len = Math.sqrt(R[0] * R[0] + R[1] * R[1] + R[2] * R[2]);
+    R[0] /= len; R[1] /= len; R[2] /= len;
+
+    // Column 1: subtract projection onto column 0, normalize
+    let dot = R[3] * R[0] + R[4] * R[1] + R[5] * R[2];
+    R[3] -= dot * R[0]; R[4] -= dot * R[1]; R[5] -= dot * R[2];
+    len = Math.sqrt(R[3] * R[3] + R[4] * R[4] + R[5] * R[5]);
+    R[3] /= len; R[4] /= len; R[5] /= len;
+
+    // Column 2: cross product of columns 0 and 1
+    R[6] = R[1] * R[5] - R[2] * R[4];
+    R[7] = R[2] * R[3] - R[0] * R[5];
+    R[8] = R[0] * R[4] - R[1] * R[3];
 }
 
 // Create balls in rack formation based on game mode
@@ -198,6 +332,7 @@ let rackBalls = createRackBalls(TABLE_WIDTH * 0.7, TABLE_HEIGHT / 2, GAME_MODES.
 let eightBall = null;
 let nineBall = null;
 let balls = [cueBall, ...rackBalls];
+let frameCount = 0;
 
 let isAiming = false;
 let aimStart = { x: 0, y: 0 };
@@ -656,12 +791,14 @@ function evaluateShot(wasBreakShot = false) {
             // Scratch handling is done elsewhere, but ensure turn switches
         } else {
             // Non-scratch foul: give ball-in-hand
-            gameState = 'ball_in_hand';
+            // Break foul: kitchen only; otherwise: anywhere
+            gameState = wasBreakShot ? 'breaking' : 'ball_in_hand';
             cueBall.active = true;
             cueBall.x = TABLE_WIDTH / 4;
             cueBall.y = TABLE_HEIGHT / 2;
             cueBall.vx = 0;
             cueBall.vy = 0;
+            cueBall.orientation = [1, 0, 0, 0, 1, 0, 0, 0, 1];
         }
         return;
     }
@@ -752,23 +889,56 @@ function applyGravity(ball, dt) {
 function handleWallCollision(ball) {
     let hitCushion = false;
 
-    if (ball.x < BOUNDS.left) {
-        ball.x = BOUNDS.left;
-        ball.vx = -ball.vx * 0.9;
-        hitCushion = true;
-    } else if (ball.x > BOUNDS.right) {
-        ball.x = BOUNDS.right;
-        ball.vx = -ball.vx * 0.9;
-        hitCushion = true;
+    for (const seg of COLLISION_SEGMENTS) {
+        // Project ball center onto segment
+        const ex = seg.x2 - seg.x1, ey = seg.y2 - seg.y1;
+        const len2 = ex * ex + ey * ey;
+        const t = Math.max(0, Math.min(1, ((ball.x - seg.x1) * ex + (ball.y - seg.y1) * ey) / len2));
+
+        // Closest point on segment
+        const cx = seg.x1 + t * ex, cy = seg.y1 + t * ey;
+        const dx = ball.x - cx, dy = ball.y - cy;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist < BALL_RADIUS && dist > 0.001) {
+            // Use radial normal (closest point → ball center) instead of
+            // precomputed face normals. For mid-segment hits this equals the
+            // face perpendicular; at shared vertices it gives smooth point-
+            // collision; and it's always correct regardless of approach side.
+            const nx = dx / dist;
+            const ny = dy / dist;
+
+            // Push ball away from closest point on segment
+            ball.x = cx + nx * BALL_RADIUS;
+            ball.y = cy + ny * BALL_RADIUS;
+
+            // Reflect velocity if moving toward the segment
+            const vDotN = ball.vx * nx + ball.vy * ny;
+            if (vDotN < 0) {
+                ball.vx -= (1 + 0.9) * vDotN * nx;
+                ball.vy -= (1 + 0.9) * vDotN * ny;
+                hitCushion = true;
+            }
+        }
     }
 
-    if (ball.y < BOUNDS.top) {
-        ball.y = BOUNDS.top;
-        ball.vy = -ball.vy * 0.9;
+    // Fallback: bounce off the wooden border edge (catches balls in pocket mouth gaps)
+    if (ball.x - BALL_RADIUS < BORDER) {
+        ball.x = BORDER + BALL_RADIUS;
+        ball.vx = Math.abs(ball.vx) * 0.9;
         hitCushion = true;
-    } else if (ball.y > BOUNDS.bottom) {
-        ball.y = BOUNDS.bottom;
-        ball.vy = -ball.vy * 0.9;
+    } else if (ball.x + BALL_RADIUS > TABLE_WIDTH - BORDER) {
+        ball.x = TABLE_WIDTH - BORDER - BALL_RADIUS;
+        ball.vx = -Math.abs(ball.vx) * 0.9;
+        hitCushion = true;
+    }
+    if (ball.y - BALL_RADIUS < BORDER) {
+        ball.y = BORDER + BALL_RADIUS;
+        ball.vy = Math.abs(ball.vy) * 0.9;
+        hitCushion = true;
+    } else if (ball.y + BALL_RADIUS > TABLE_HEIGHT - BORDER) {
+        ball.y = TABLE_HEIGHT - BORDER - BALL_RADIUS;
+        ball.vy = -Math.abs(ball.vy) * 0.9;
         hitCushion = true;
     }
 
@@ -837,9 +1007,7 @@ function checkPockets(ball) {
     for (const pocket of POCKETS) {
         const dx = pocket.x - ball.x;
         const dy = pocket.y - ball.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-
-        if (dist < POCKET_RADIUS) {
+        if (Math.sqrt(dx * dx + dy * dy) < pocket.radius) {
             ball.active = false;
             // Track pocketed balls for shot evaluation (excluding cue ball)
             if (shotData.shotInProgress && ball !== cueBall) {
@@ -879,7 +1047,7 @@ function isValidPlacement(x, y, kitchenOnly = false) {
     for (const pocket of POCKETS) {
         const dx = pocket.x - x;
         const dy = pocket.y - y;
-        if (Math.sqrt(dx * dx + dy * dy) < POCKET_RADIUS + BALL_RADIUS) {
+        if (Math.sqrt(dx * dx + dy * dy) < pocket.radius + BALL_RADIUS) {
             return false;
         }
     }
@@ -903,21 +1071,32 @@ function update(dt) {
 
     // Cap delta time to prevent physics explosions
     dt = Math.min(dt, 0.02);
+    frameCount++;
 
     for (const ball of balls) {
         if (!ball.active) continue;
+
+        // Save position before physics for orientation update
+        const prevX = ball.x;
+        const prevY = ball.y;
 
         // Apply gravity only to moving balls
         if (ball.isMoving() && gravityEnabled) {
             applyGravity(ball, dt);
         }
 
-        // Update position
-        ball.x += ball.vx;
-        ball.y += ball.vy;
-
-        // Apply speed-dependent friction (stronger at low speeds)
+        // Sub-step position + collision for fast-moving balls to prevent tunneling
         const speed = Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy);
+        const substeps = Math.max(1, Math.ceil(speed / (BALL_RADIUS * 0.8)));
+        let pocketed = false;
+        for (let s = 0; s < substeps; s++) {
+            ball.x += ball.vx / substeps;
+            ball.y += ball.vy / substeps;
+            if (checkPockets(ball)) { pocketed = true; break; }
+            handleWallCollision(ball);
+        }
+
+        // Apply speed-dependent friction (once per frame, not per substep)
         let friction;
         if (speed >= FRICTION_THRESHOLD) {
             friction = FRICTION_HIGH;
@@ -936,11 +1115,14 @@ function update(dt) {
             ball.vy = 0;
         }
 
-        // Wall collisions
-        handleWallCollision(ball);
+        // Update ball orientation from frame displacement (rolling animation)
+        updateBallOrientation(ball, ball.x - prevX, ball.y - prevY);
+        if (frameCount % 120 === 0 && ball.isMoving()) {
+            reorthonormalize(ball.orientation);
+        }
 
         // Pocket detection - check for scratch and win conditions
-        if (checkPockets(ball)) {
+        if (pocketed) {
             if (ball === cueBall && currentMode.checkScratch) {
                 scratchPending = true;
                 // cueBall.active is already false from checkPockets()
@@ -963,46 +1145,106 @@ function update(dt) {
     if (scratchPending && !areBallsMoving()) {
         scratchPending = false;
         shotData.shotInProgress = false;
-        isBreakShot = false;
+        const wasBreakShot = isBreakShot;
+        // Only clear isBreakShot on non-break scratches (break foul keeps it true)
+        if (!wasBreakShot) {
+            isBreakShot = false;
+        }
 
         // Scratch is a foul - switch players and give ball-in-hand
         if (currentMode !== GAME_MODES.freePlay) {
             switchPlayer();
         }
-        gameState = 'ball_in_hand';
+        // Break foul: kitchen only; otherwise: anywhere
+        gameState = wasBreakShot ? 'breaking' : 'ball_in_hand';
         cueBall.active = true;
         cueBall.x = TABLE_WIDTH / 4;
         cueBall.y = TABLE_HEIGHT / 2;
         cueBall.vx = 0;
         cueBall.vy = 0;
+        cueBall.orientation = [1, 0, 0, 0, 1, 0, 0, 0, 1];
     }
 
     // Check if shot completed (balls stopped moving)
     if (shotData.shotInProgress && !areBallsMoving()) {
         shotData.shotInProgress = false;
         const wasBreakShot = isBreakShot;
-        isBreakShot = false;
         evaluateShot(wasBreakShot);
+        // Only clear isBreakShot if the break was legal (not still in 'breaking' state)
+        if (gameState !== 'breaking') {
+            isBreakShot = false;
+        }
     }
 }
 
 // Draw functions
 function drawTable() {
-    // Felt
-    ctx.fillStyle = '#0a5c36';
-    ctx.fillRect(0, 0, TABLE_WIDTH, TABLE_HEIGHT);
+    // 1. Wooden border (entire canvas, rounded corners)
+    ctx.fillStyle = '#5c3a1e';
+    ctx.beginPath();
+    ctx.roundRect(0, 0, TABLE_WIDTH, TABLE_HEIGHT, 10);
+    ctx.fill();
 
-    // Cushions
+    // 2. Felt (play surface)
     ctx.fillStyle = '#0d7a48';
-    ctx.fillRect(CUSHION, CUSHION, TABLE_WIDTH - CUSHION * 2, TABLE_HEIGHT - CUSHION * 2);
-}
+    ctx.fillRect(BORDER, BORDER, TABLE_WIDTH - BORDER * 2, TABLE_HEIGHT - BORDER * 2);
 
-function drawPockets() {
+    // 3. Pocket holes (black circles on top of felt, partially covered by rails)
     ctx.fillStyle = '#000000';
     for (const pocket of POCKETS) {
         ctx.beginPath();
-        ctx.arc(pocket.x, pocket.y, POCKET_RADIUS, 0, Math.PI * 2);
+        ctx.arc(pocket.x, pocket.y, pocket.radius, 0, Math.PI * 2);
         ctx.fill();
+    }
+
+    // 4. Rail polygons (cushion rubber)
+    ctx.fillStyle = '#0a5c36';
+    for (const rail of RAILS) {
+        const A = rail.inner[0], B = rail.inner[1];
+        const C = rail.outer[0], D = rail.outer[1];
+        ctx.beginPath();
+        ctx.moveTo(A.x, A.y);
+        ctx.lineTo(B.x, B.y);
+        ctx.lineTo(C.x, C.y);
+        ctx.lineTo(D.x, D.y);
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    // 5. Rail nose highlights (inner edge of each rail)
+    ctx.strokeStyle = '#1a8f5c';
+    ctx.lineWidth = 1.5;
+    for (const rail of RAILS) {
+        ctx.beginPath();
+        ctx.moveTo(rail.inner[0].x, rail.inner[0].y);
+        ctx.lineTo(rail.inner[1].x, rail.inner[1].y);
+        ctx.stroke();
+    }
+
+    // 6. Aiming dots (diamonds) on the wooden border, spanning pocket-to-pocket
+    ctx.fillStyle = '#e8e0d0';
+    const dotRadius = 2.5;
+    const borderMid = BORDER / 2;
+    const dotSegments = [
+        // Top border: 2 segments (corner-to-side, side-to-corner)
+        { x1: POCKETS[0].x, x2: POCKETS[1].x, y: borderMid },
+        { x1: POCKETS[1].x, x2: POCKETS[2].x, y: borderMid },
+        // Bottom border: 2 segments
+        { x1: POCKETS[3].x, x2: POCKETS[4].x, y: TABLE_HEIGHT - borderMid },
+        { x1: POCKETS[4].x, x2: POCKETS[5].x, y: TABLE_HEIGHT - borderMid },
+        // Left border: 1 segment
+        { y1: POCKETS[0].y, y2: POCKETS[3].y, x: borderMid },
+        // Right border: 1 segment
+        { y1: POCKETS[2].y, y2: POCKETS[5].y, x: TABLE_WIDTH - borderMid },
+    ];
+    for (const seg of dotSegments) {
+        for (let i = 1; i <= 3; i++) {
+            const dx = seg.x1 !== undefined ? seg.x1 + (seg.x2 - seg.x1) * i / 4 : seg.x;
+            const dy = seg.y1 !== undefined ? seg.y1 + (seg.y2 - seg.y1) * i / 4 : seg.y;
+            ctx.beginPath();
+            ctx.arc(dx, dy, dotRadius, 0, Math.PI * 2);
+            ctx.fill();
+        }
     }
 }
 
@@ -1050,28 +1292,48 @@ function drawBall(ball) {
     ctx.arc(ball.x + 2, ball.y + 2, ball.radius, 0, Math.PI * 2);
     ctx.fill();
 
-    // Ball body
-    ctx.fillStyle = ballColor;
-    ctx.beginPath();
-    ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
-    ctx.fill();
+    const R = ball.orientation;
 
-    // Stripe for balls 9-15
     if (ball.isStripe) {
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath();
-        ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
-        ctx.fill();
-        // Draw colored band in middle
-        ctx.fillStyle = ball.color;
-        ctx.beginPath();
-        ctx.rect(ball.x - ball.radius, ball.y - ball.radius * 0.4, ball.radius * 2, ball.radius * 0.8);
+        // Per-pixel sphere rendering: project each pixel to body frame
+        // to determine if it's in the stripe band or white cap
+        const data = stripeImageData.data;
+        data.fill(0);
+        const cr = parseInt(ballColor.slice(1, 3), 16);
+        const cg = parseInt(ballColor.slice(3, 5), 16);
+        const cb = parseInt(ballColor.slice(5, 7), 16);
+
+        for (let i = 0; i < SPHERE_PIXELS.length; i++) {
+            const sp = SPHERE_PIXELS[i];
+            // Body-frame z: dot product of orientation pole axis with surface normal
+            const bodyZ = R[6] * sp.nx + R[7] * sp.ny + R[8] * sp.nz;
+            const idx = ((sp.py + BALL_RADIUS) * STRIPE_SIZE + (sp.px + BALL_RADIUS)) * 4;
+            if (Math.abs(bodyZ) < BAND_HALF) {
+                data[idx] = cr;
+                data[idx + 1] = cg;
+                data[idx + 2] = cb;
+            } else {
+                data[idx] = 255;
+                data[idx + 1] = 255;
+                data[idx + 2] = 255;
+            }
+            data[idx + 3] = 255;
+        }
+        stripeOCtx.putImageData(stripeImageData, 0, 0);
+
+        // Draw with anti-aliased circle clip
         ctx.save();
+        ctx.beginPath();
+        ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
         ctx.clip();
+        ctx.drawImage(stripeOffscreen, ball.x - BALL_RADIUS, ball.y - BALL_RADIUS);
+        ctx.restore();
+    } else {
+        // Solid ball body
+        ctx.fillStyle = ballColor;
         ctx.beginPath();
         ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
         ctx.fill();
-        ctx.restore();
     }
 
     // Ball outline
@@ -1081,18 +1343,36 @@ function drawBall(ball) {
     ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
     ctx.stroke();
 
-    // Number label
+    // Number label (orientation-aware)
     if (ball.label) {
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath();
-        ctx.arc(ball.x, ball.y, ball.radius * 0.45, 0, Math.PI * 2);
-        ctx.fill();
+        const poleZ = R[8]; // how much the label faces the camera
 
-        ctx.fillStyle = '#000000';
-        ctx.font = 'bold 9px Arial';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(ball.label, ball.x, ball.y);
+        if (poleZ > 0.15) {
+            const labelX = ball.x + R[6] * ball.radius;
+            const labelY = ball.y + R[7] * ball.radius;
+            const scale = poleZ;
+
+            // Fade in over R[8] range [0.15, 0.35]
+            const labelAlpha = Math.min(1, (poleZ - 0.15) / 0.2);
+            ctx.globalAlpha = alpha * labelAlpha;
+
+            // White number circle (foreshortened)
+            const circleRadius = ball.radius * 0.45 * scale;
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(labelX, labelY, circleRadius, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Number text (scaled)
+            const fontSize = Math.max(4, Math.round(9 * scale));
+            ctx.fillStyle = '#000000';
+            ctx.font = `bold ${fontSize}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(ball.label, labelX, labelY);
+
+            ctx.globalAlpha = alpha;
+        }
     }
 
     // Reset alpha
@@ -1285,11 +1565,13 @@ function drawPlayerIndicator() {
 
     ctx.font = 'bold 14px Arial';
     ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
 
     // Current player indicator
+    const borderCenterY = BORDER / 2;
     const playerText = `Player ${currentPlayer}'s Turn`;
     ctx.fillStyle = currentPlayer === 1 ? '#5599ff' : '#ff7755';
-    ctx.fillText(playerText, 55, 10);
+    ctx.fillText(playerText, 55, borderCenterY);
 
     // Mode-specific info next to player indicator
     ctx.textAlign = 'left';
@@ -1297,7 +1579,7 @@ function drawPlayerIndicator() {
     if (currentMode === GAME_MODES.eightBall) {
         // Show group indicator as ball drawing
         const miniX = 175;
-        const miniY = 10;
+        const miniY = borderCenterY;
         const miniRadius = 8;
 
         if (player1Group) {
@@ -1373,7 +1655,7 @@ function drawPlayerIndicator() {
         const lowestBall = getLowestBall();
         if (lowestBall) {
             const miniX = 175;
-            const miniY = 10;
+            const miniY = borderCenterY;
             const miniRadius = 8;
 
             // Ball body
@@ -1424,20 +1706,22 @@ function drawInstructions() {
     ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
     ctx.font = '14px Arial';
     ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const bottomBorderCenterY = TABLE_HEIGHT - BORDER / 2;
 
     if (gameState === 'ball_in_hand') {
-        ctx.fillText('Click to place cue ball', TABLE_WIDTH / 2, TABLE_HEIGHT - 10);
+        ctx.fillText('Click to place cue ball', TABLE_WIDTH / 2, bottomBorderCenterY);
         return;
     }
 
     if (gameState === 'breaking') {
-        ctx.fillText('Place cue ball in the kitchen, then click to break', TABLE_WIDTH / 2, TABLE_HEIGHT - 10);
+        ctx.fillText('Place cue ball in the kitchen, then click to break', TABLE_WIDTH / 2, bottomBorderCenterY);
         return;
     }
 
     if (gameState !== 'playing' || areBallsMoving()) return;
 
-    ctx.fillText('Click and drag from the cue ball to aim, release to shoot', TABLE_WIDTH / 2, TABLE_HEIGHT - 10);
+    ctx.fillText('Click and drag from the cue ball to aim, release to shoot', TABLE_WIDTH / 2, bottomBorderCenterY);
 }
 
 function drawKitchenLine() {
@@ -1455,7 +1739,6 @@ function drawKitchenLine() {
 
 function render() {
     drawTable();
-    drawPockets();
     if (gravityEnabled) {
         drawGravityWell();
     }
