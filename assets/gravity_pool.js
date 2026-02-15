@@ -8,6 +8,21 @@ const TABLE_HEIGHT = 468;
 canvas.width = TABLE_WIDTH;
 canvas.height = TABLE_HEIGHT;
 
+// Portrait orientation support for mobile
+let isPortrait = false;
+
+function updateOrientation() {
+    const portrait = window.innerWidth < window.innerHeight && window.innerWidth < 768;
+    if (portrait !== isPortrait) {
+        isPortrait = portrait;
+        canvas.width = isPortrait ? TABLE_HEIGHT : TABLE_WIDTH;
+        canvas.height = isPortrait ? TABLE_WIDTH : TABLE_HEIGHT;
+    }
+}
+
+window.addEventListener('resize', updateOrientation);
+updateOrientation();
+
 // Physics constants
 const BALL_RADIUS = 12;
 const GRAVITY_STRENGTH = 50000;
@@ -364,6 +379,17 @@ let player1Group = null;        // 'solids', 'stripes', or null (8-ball only)
 let player2Group = null;        // opposite of player1Group (8-ball only)
 let isBreakShot = true;         // True for the first shot of the game
 
+// Convert screen coordinates to game coordinates (handles portrait rotation)
+function getGameCoords(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    const px = (clientX - rect.left) * (canvas.width / rect.width);
+    const py = (clientY - rect.top) * (canvas.height / rect.height);
+    if (isPortrait) {
+        return { x: TABLE_WIDTH - py, y: px };
+    }
+    return { x: px, y: py };
+}
+
 // Input handling
 canvas.addEventListener('mousedown', (e) => {
     // Handle ball_in_hand or breaking placement
@@ -388,11 +414,7 @@ canvas.addEventListener('mousedown', (e) => {
 
     if (areBallsMoving()) return;
 
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const mouseX = (e.clientX - rect.left) * scaleX;
-    const mouseY = (e.clientY - rect.top) * scaleY;
+    const { x: mouseX, y: mouseY } = getGameCoords(e.clientX, e.clientY);
 
     // Check if clicking on cue ball
     const dx = mouseX - cueBall.x;
@@ -408,11 +430,7 @@ canvas.addEventListener('mousedown', (e) => {
 
 // Use document for mousemove/mouseup so dragging outside canvas still works
 document.addEventListener('mousemove', (e) => {
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const mouseX = (e.clientX - rect.left) * scaleX;
-    const mouseY = (e.clientY - rect.top) * scaleY;
+    const { x: mouseX, y: mouseY } = getGameCoords(e.clientX, e.clientY);
 
     // Handle ball_in_hand positioning
     if (gameState === 'ball_in_hand') {
@@ -459,11 +477,7 @@ document.addEventListener('mouseup', () => {
 canvas.addEventListener('touchstart', (e) => {
     e.preventDefault();
     const touch = e.touches[0];
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const touchX = (touch.clientX - rect.left) * scaleX;
-    const touchY = (touch.clientY - rect.top) * scaleY;
+    const { x: touchX, y: touchY } = getGameCoords(touch.clientX, touch.clientY);
 
     // Handle ball_in_hand or breaking placement
     if (gameState === 'ball_in_hand' || gameState === 'breaking') {
@@ -508,11 +522,7 @@ canvas.addEventListener('touchstart', (e) => {
 canvas.addEventListener('touchmove', (e) => {
     e.preventDefault();
     const touch = e.touches[0];
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const touchX = (touch.clientX - rect.left) * scaleX;
-    const touchY = (touch.clientY - rect.top) * scaleY;
+    const { x: touchX, y: touchY } = getGameCoords(touch.clientX, touch.clientY);
 
     // Handle ball_in_hand positioning
     if (gameState === 'ball_in_hand') {
@@ -1521,7 +1531,16 @@ function drawAimingArrow() {
     ctx.fillStyle = '#ffffff';
     ctx.font = '14px Arial';
     ctx.textAlign = 'center';
-    ctx.fillText(`Power: ${Math.round(power / MAX_POWER * 100)}%`, TABLE_WIDTH / 2, 40);
+    const powerText = `Power: ${Math.round(power / MAX_POWER * 100)}%`;
+    if (isPortrait) {
+        ctx.save();
+        ctx.translate(TABLE_WIDTH / 2, 40);
+        ctx.rotate(Math.PI / 2);
+        ctx.fillText(powerText, 0, 0);
+        ctx.restore();
+    } else {
+        ctx.fillText(powerText, TABLE_WIDTH / 2, 40);
+    }
 
     // Draw deflection indicator on first ball in path
     const result = findFirstBallInPath(cueBall.x, cueBall.y, Math.cos(angle), Math.sin(angle));
@@ -1538,29 +1557,57 @@ function drawGameState() {
         ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
         ctx.fillRect(0, 0, TABLE_WIDTH, TABLE_HEIGHT);
 
-        ctx.fillStyle = '#00ff00';
-        ctx.font = 'bold 48px Arial';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
         const winText = currentMode === GAME_MODES.freePlay ? 'YOU WIN!' : `PLAYER ${currentPlayer} WINS!`;
-        ctx.fillText(winText, TABLE_WIDTH / 2, TABLE_HEIGHT / 2 - 20);
-
-        ctx.fillStyle = '#ffffff';
-        ctx.font = '20px Arial';
-        ctx.fillText('Click to continue', TABLE_WIDTH / 2, TABLE_HEIGHT / 2 + 30);
+        if (isPortrait) {
+            ctx.save();
+            ctx.translate(TABLE_WIDTH / 2, TABLE_HEIGHT / 2);
+            ctx.rotate(Math.PI / 2);
+            ctx.fillStyle = '#00ff00';
+            ctx.font = 'bold 48px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(winText, 0, -20);
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '20px Arial';
+            ctx.fillText('Tap to continue', 0, 30);
+            ctx.restore();
+        } else {
+            ctx.fillStyle = '#00ff00';
+            ctx.font = 'bold 48px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(winText, TABLE_WIDTH / 2, TABLE_HEIGHT / 2 - 20);
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '20px Arial';
+            ctx.fillText('Click to continue', TABLE_WIDTH / 2, TABLE_HEIGHT / 2 + 30);
+        }
     } else if (gameState === 'lost') {
         ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
         ctx.fillRect(0, 0, TABLE_WIDTH, TABLE_HEIGHT);
 
-        ctx.fillStyle = '#ff0000';
-        ctx.font = 'bold 48px Arial';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('SCRATCH!', TABLE_WIDTH / 2, TABLE_HEIGHT / 2 - 20);
-
-        ctx.fillStyle = '#ffffff';
-        ctx.font = '20px Arial';
-        ctx.fillText('Click to continue', TABLE_WIDTH / 2, TABLE_HEIGHT / 2 + 30);
+        if (isPortrait) {
+            ctx.save();
+            ctx.translate(TABLE_WIDTH / 2, TABLE_HEIGHT / 2);
+            ctx.rotate(Math.PI / 2);
+            ctx.fillStyle = '#ff0000';
+            ctx.font = 'bold 48px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('SCRATCH!', 0, -20);
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '20px Arial';
+            ctx.fillText('Tap to continue', 0, 30);
+            ctx.restore();
+        } else {
+            ctx.fillStyle = '#ff0000';
+            ctx.font = 'bold 48px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('SCRATCH!', TABLE_WIDTH / 2, TABLE_HEIGHT / 2 - 20);
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '20px Arial';
+            ctx.fillText('Click to continue', TABLE_WIDTH / 2, TABLE_HEIGHT / 2 + 30);
+        }
     }
 }
 
@@ -1711,24 +1758,27 @@ function drawPlayerIndicator() {
 
 function drawInstructions() {
     ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-    ctx.font = '14px Arial';
+    ctx.font = isPortrait ? '12px Arial' : '14px Arial';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    const bottomBorderCenterY = TABLE_HEIGHT - BORDER / 2;
+    const centerX = canvas.width / 2;
+    const bottomBorderCenterY = canvas.height - BORDER / 2;
 
     if (gameState === 'ball_in_hand') {
-        ctx.fillText('Click to place cue ball', TABLE_WIDTH / 2, bottomBorderCenterY);
+        ctx.fillText('Click to place cue ball', centerX, bottomBorderCenterY);
         return;
     }
 
     if (gameState === 'breaking') {
-        ctx.fillText('Place cue ball in the kitchen, then click to break', TABLE_WIDTH / 2, bottomBorderCenterY);
+        const breakText = isPortrait ? 'Place cue ball in kitchen' : 'Place cue ball in the kitchen, then click to break';
+        ctx.fillText(breakText, centerX, bottomBorderCenterY);
         return;
     }
 
     if (gameState !== 'playing' || areBallsMoving()) return;
 
-    ctx.fillText('Click and drag from the cue ball to aim, release to shoot', TABLE_WIDTH / 2, bottomBorderCenterY);
+    const aimText = isPortrait ? 'Drag from cue ball to aim' : 'Click and drag from the cue ball to aim, release to shoot';
+    ctx.fillText(aimText, centerX, bottomBorderCenterY);
 }
 
 function drawKitchenLine() {
@@ -1745,6 +1795,12 @@ function drawKitchenLine() {
 }
 
 function render() {
+    if (isPortrait) {
+        ctx.save();
+        ctx.translate(0, canvas.height);
+        ctx.rotate(-Math.PI / 2);
+    }
+
     drawTable();
     if (gravityEnabled) {
         drawGravityWell();
@@ -1756,9 +1812,14 @@ function render() {
     }
 
     drawAimingArrow();
+    drawGameState();
+
+    if (isPortrait) {
+        ctx.restore();
+    }
+
     drawPlayerIndicator();
     drawInstructions();
-    drawGameState();
 }
 
 // Reset game
@@ -1814,6 +1875,7 @@ document.getElementById('modeSelector').classList.add('visible');
 // Handle orientation changes on mobile
 window.addEventListener('orientationchange', () => {
     setTimeout(() => {
+        updateOrientation();
         window.scrollTo(0, 0);
     }, 100);
 });
