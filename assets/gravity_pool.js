@@ -5,18 +5,70 @@ const ctx = canvas.getContext('2d');
 // Table dimensions
 const TABLE_WIDTH = 818;
 const TABLE_HEIGHT = 468;
-canvas.width = TABLE_WIDTH;
-canvas.height = TABLE_HEIGHT;
+const CUE_OVERHANG = 80; // extra pixels beyond table edge each side for cue stick rendering
+canvas.width = TABLE_WIDTH + 2 * CUE_OVERHANG;
+canvas.height = TABLE_HEIGHT + 2 * CUE_OVERHANG;
 
 // Portrait orientation support for mobile
 let isPortrait = false;
+let manualRotation = 0; // 0, 1, 2, 3 representing 0°, 90°, 180°, 270° CW
+let aimingStatusText = null; // { text, color } set by drawAimingArrow, drawn in screen space
+
+function getEffectiveRotation() {
+    return (manualRotation + (isPortrait ? 3 : 0)) % 4;
+}
+
+// Logical canvas dimensions (used by all drawing code)
+let logicalW = TABLE_WIDTH + 2 * CUE_OVERHANG;
+let logicalH = TABLE_HEIGHT + 2 * CUE_OVERHANG;
+
+function updateCanvasSize() {
+    const rot = getEffectiveRotation();
+    const swapped = rot === 1 || rot === 3;
+    const baseW = swapped ? TABLE_HEIGHT : TABLE_WIDTH;
+    const baseH = swapped ? TABLE_WIDTH : TABLE_HEIGHT;
+    logicalW = baseW + 2 * CUE_OVERHANG;
+    logicalH = baseH + 2 * CUE_OVERHANG;
+    updateCanvasCSS();
+}
+
+function updateCanvasCSS() {
+    const rot = getEffectiveRotation();
+    const swapped = rot === 1 || rot === 3;
+    const baseW = swapped ? TABLE_HEIGHT : TABLE_WIDTH;
+    const baseH = swapped ? TABLE_WIDTH : TABLE_HEIGHT;
+    const hPad = window.innerWidth > 900 ? 240 : 36;
+    const availW = window.innerWidth - hPad;
+    const availH = window.innerHeight - 80;
+    // Scale so the table portion (not full canvas) fits available space
+    const scale = Math.min(availW / baseW, availH / baseH);
+    logicalW = baseW + 2 * CUE_OVERHANG;
+    logicalH = baseH + 2 * CUE_OVERHANG;
+    const fullW = logicalW * scale;
+    const fullH = logicalH * scale;
+    const overhangPx = CUE_OVERHANG * scale;
+    // Size canvas buffer to match display resolution for crisp rendering
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(fullW * dpr);
+    canvas.height = Math.round(fullH * dpr);
+    canvas.style.width = fullW + 'px';
+    canvas.style.height = fullH + 'px';
+    // Negative margins so layout box matches the table size (overhang extends beyond)
+    // Reserve 20 canvas-px at top for aiming status text
+    const textReserve = 20 * scale;
+    canvas.style.marginTop = -(overhangPx - textReserve) + 'px';
+    canvas.style.marginBottom = -overhangPx + 'px';
+    canvas.style.marginLeft = -overhangPx + 'px';
+    canvas.style.marginRight = -overhangPx + 'px';
+}
 
 function updateOrientation() {
     const portrait = window.innerWidth < window.innerHeight && window.innerWidth < 768;
     if (portrait !== isPortrait) {
         isPortrait = portrait;
-        canvas.width = isPortrait ? TABLE_HEIGHT : TABLE_WIDTH;
-        canvas.height = isPortrait ? TABLE_WIDTH : TABLE_HEIGHT;
+        updateCanvasSize();
+    } else {
+        updateCanvasCSS();
     }
 }
 
@@ -196,10 +248,16 @@ class Ball {
         this.isStripe = isStripe;
         this.active = true;
         // 3x3 rotation matrix (column-major flat array) for rolling animation
-        // | R[0] R[3] R[6] |   Column 2 (R[6],R[7],R[8]) = north pole (number label)
-        // | R[1] R[4] R[7] |   R[8] > 0 means label faces camera
-        // | R[2] R[5] R[8] |   Identity = number centered, stripe horizontal
-        this.orientation = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+        // | R[0] R[3] R[6] |   Column 2 (R[6],R[7],R[8]) = north pole (white cap axis)
+        // | R[1] R[4] R[7] |   Solid balls: label at pole (column 2)
+        // | R[2] R[5] R[8] |   Stripe balls: label at equator (column 0, always in stripe band)
+        if (isStripe) {
+            // Stripe: pole sideways so stripe band is visible at rest,
+            // column 0 faces camera so number is centered
+            this.orientation = [0, 0, 1, 1, 0, 0, 0, 1, 0];
+        } else {
+            this.orientation = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+        }
     }
 
     isMoving() {
@@ -356,6 +414,15 @@ let balls = [cueBall, ...rackBalls];
 let frameCount = 0;
 
 let isAiming = false;
+let aimExceededThreshold = false; // true once power exceeds 5% during current drag
+let cueStriking = false;       // true during strike animation
+let cueStrikeAngle = 0;        // angle of the shot being struck
+let cueStrikePower = 0;        // power of the shot
+let cueStrikeStartDist = 0;    // tip distance from ball at animation start
+let cueStrikeStartTime = 0;    // timestamp when strike began
+const CUE_LENGTH = 350;        // total cue stick length in pixels
+const CUE_STRIKE_DURATION = 120; // ms for strike animation
+const CUE_GAP = 4;             // minimum gap between tip and ball edge when aiming
 let aimStart = { x: 0, y: 0 };
 let aimEnd = { x: 0, y: 0 };
 let gameState = 'mode_select'; // 'mode_select', 'breaking', 'playing', 'won', 'lost', 'ball_in_hand'
@@ -379,15 +446,19 @@ let player1Group = null;        // 'solids', 'stripes', or null (8-ball only)
 let player2Group = null;        // opposite of player1Group (8-ball only)
 let isBreakShot = true;         // True for the first shot of the game
 
-// Convert screen coordinates to game coordinates (handles portrait rotation)
+// Convert screen coordinates to game coordinates (handles rotation)
 function getGameCoords(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
-    const px = (clientX - rect.left) * (canvas.width / rect.width);
-    const py = (clientY - rect.top) * (canvas.height / rect.height);
-    if (isPortrait) {
-        return { x: TABLE_WIDTH - py, y: px };
+    // Convert screen coords to canvas pixel coords, then subtract overhang offset
+    const px = (clientX - rect.left) * (logicalW / rect.width) - CUE_OVERHANG;
+    const py = (clientY - rect.top) * (logicalH / rect.height) - CUE_OVERHANG;
+    const rot = getEffectiveRotation();
+    switch (rot) {
+        case 1: return { x: py, y: TABLE_HEIGHT - px };
+        case 2: return { x: TABLE_WIDTH - px, y: TABLE_HEIGHT - py };
+        case 3: return { x: TABLE_WIDTH - py, y: px };
+        default: return { x: px, y: py };
     }
-    return { x: px, y: py };
 }
 
 // Input handling
@@ -412,7 +483,7 @@ canvas.addEventListener('mousedown', (e) => {
         return;
     }
 
-    if (areBallsMoving()) return;
+    if (areBallsMoving() || cueStriking) return;
 
     const { x: mouseX, y: mouseY } = getGameCoords(e.clientX, e.clientY);
 
@@ -423,6 +494,7 @@ canvas.addEventListener('mousedown', (e) => {
 
     if (dist <= cueBall.radius * 2) {
         isAiming = true;
+        aimExceededThreshold = false;
         aimStart = { x: cueBall.x, y: cueBall.y };
         aimEnd = { x: mouseX, y: mouseY };
     }
@@ -453,6 +525,15 @@ document.addEventListener('mousemove', (e) => {
     if (!isAiming) return;
 
     aimEnd = { x: mouseX, y: mouseY };
+
+    if (!aimExceededThreshold) {
+        const dx = aimStart.x - aimEnd.x;
+        const dy = aimStart.y - aimEnd.y;
+        const power = Math.min(Math.sqrt(dx * dx + dy * dy) * POWER_SCALE, MAX_POWER);
+        if (power / MAX_POWER * 100 >= 5) {
+            aimExceededThreshold = true;
+        }
+    }
 });
 
 document.addEventListener('mouseup', () => {
@@ -462,12 +543,21 @@ document.addEventListener('mouseup', () => {
     const dx = aimStart.x - aimEnd.x;
     const dy = aimStart.y - aimEnd.y;
     const power = Math.min(Math.sqrt(dx * dx + dy * dy) * POWER_SCALE, MAX_POWER);
+    const powerPct = power / MAX_POWER * 100;
 
-    if (power > 0.5) {
+    // Cancel shot if power dropped below 5% after exceeding it
+    if (aimExceededThreshold && powerPct < 5) {
+        isAiming = false;
+        return;
+    }
+
+    if (powerPct >= 5) {
         const angle = Math.atan2(dy, dx);
-        cueBall.vx = Math.cos(angle) * power;
-        cueBall.vy = Math.sin(angle) * power;
-        resetShotData();  // Start tracking this shot
+        cueStriking = true;
+        cueStrikeAngle = angle;
+        cueStrikePower = power;
+        cueStrikeStartDist = CUE_GAP + BALL_RADIUS + (power / MAX_POWER) * 80;
+        cueStrikeStartTime = performance.now();
     }
 
     isAiming = false;
@@ -505,7 +595,7 @@ canvas.addEventListener('touchstart', (e) => {
         return;
     }
 
-    if (areBallsMoving()) return;
+    if (areBallsMoving() || cueStriking) return;
 
     const dx = touchX - cueBall.x;
     const dy = touchY - cueBall.y;
@@ -514,6 +604,7 @@ canvas.addEventListener('touchstart', (e) => {
     // Larger touch target for mobile (4x radius vs 2x for mouse)
     if (dist <= cueBall.radius * 4) {
         isAiming = true;
+        aimExceededThreshold = false;
         aimStart = { x: cueBall.x, y: cueBall.y };
         aimEnd = { x: touchX, y: touchY };
     }
@@ -543,6 +634,15 @@ canvas.addEventListener('touchmove', (e) => {
     if (!isAiming) return;
 
     aimEnd = { x: touchX, y: touchY };
+
+    if (!aimExceededThreshold) {
+        const dx = aimStart.x - aimEnd.x;
+        const dy = aimStart.y - aimEnd.y;
+        const power = Math.min(Math.sqrt(dx * dx + dy * dy) * POWER_SCALE, MAX_POWER);
+        if (power / MAX_POWER * 100 >= 5) {
+            aimExceededThreshold = true;
+        }
+    }
 });
 
 canvas.addEventListener('touchend', (e) => {
@@ -552,12 +652,21 @@ canvas.addEventListener('touchend', (e) => {
     const dx = aimStart.x - aimEnd.x;
     const dy = aimStart.y - aimEnd.y;
     const power = Math.min(Math.sqrt(dx * dx + dy * dy) * POWER_SCALE, MAX_POWER);
+    const powerPct = power / MAX_POWER * 100;
 
-    if (power > 0.5) {
+    // Cancel shot if power dropped below 5% after exceeding it
+    if (aimExceededThreshold && powerPct < 5) {
+        isAiming = false;
+        return;
+    }
+
+    if (powerPct >= 5) {
         const angle = Math.atan2(dy, dx);
-        cueBall.vx = Math.cos(angle) * power;
-        cueBall.vy = Math.sin(angle) * power;
-        resetShotData();  // Start tracking this shot
+        cueStriking = true;
+        cueStrikeAngle = angle;
+        cueStrikePower = power;
+        cueStrikeStartDist = CUE_GAP + BALL_RADIUS + (power / MAX_POWER) * 80;
+        cueStrikeStartTime = performance.now();
     }
 
     isAiming = false;
@@ -610,6 +719,16 @@ document.querySelectorAll('#modeSelector button').forEach(btn => {
 document.getElementById('restartBtn').addEventListener('click', () => {
     gameState = 'mode_select';
     document.getElementById('modeSelector').classList.add('visible');
+});
+
+document.getElementById('rotateCWBtn').addEventListener('click', () => {
+    manualRotation = (manualRotation + 3) % 4;
+    updateCanvasSize();
+});
+
+document.getElementById('rotateCCWBtn').addEventListener('click', () => {
+    manualRotation = (manualRotation + 1) % 4;
+    updateCanvasSize();
 });
 
 // Check if any balls are still moving
@@ -1361,16 +1480,19 @@ function drawBall(ball) {
     ctx.stroke();
 
     // Number label (orientation-aware)
+    // Solid balls: label at pole (column 2). Stripe balls: label at equator (column 0).
     if (ball.label) {
-        const poleZ = R[8]; // how much the label faces the camera
+        const labelDirX = ball.isStripe ? R[0] : R[6];
+        const labelDirY = ball.isStripe ? R[1] : R[7];
+        const labelDirZ = ball.isStripe ? R[2] : R[8];
 
-        if (poleZ > 0.15) {
-            const labelX = ball.x + R[6] * ball.radius;
-            const labelY = ball.y + R[7] * ball.radius;
-            const scale = poleZ;
+        if (labelDirZ > 0.15) {
+            const labelX = ball.x + labelDirX * ball.radius;
+            const labelY = ball.y + labelDirY * ball.radius;
+            const scale = labelDirZ;
 
-            // Fade in over R[8] range [0.15, 0.35]
-            const labelAlpha = Math.min(1, (poleZ - 0.15) / 0.2);
+            // Fade in as label direction faces camera
+            const labelAlpha = Math.min(1, (labelDirZ - 0.15) / 0.2);
             ctx.globalAlpha = alpha * labelAlpha;
 
             // White number circle (foreshortened)
@@ -1487,16 +1609,83 @@ function drawDeflectionIndicator(targetBall, originX, originY, dirX, dirY) {
     ctx.stroke();
 }
 
+function drawCueStick(tipX, tipY, angle) {
+    ctx.save();
+    ctx.translate(tipX, tipY);
+    ctx.rotate(angle + Math.PI); // butt extends away from shot direction
+
+    // Tip (0-3px): dark gray rounded cap
+    ctx.fillStyle = '#444';
+    ctx.beginPath();
+    ctx.arc(0, 0, 2.5, Math.PI / 2, -Math.PI / 2);
+    ctx.lineTo(3, -2.5);
+    ctx.lineTo(3, 2.5);
+    ctx.closePath();
+    ctx.fill();
+
+    // Ferrule (3-10px): white/off-white band
+    ctx.fillStyle = '#f0ece0';
+    ctx.fillRect(3, -2.5, 7, 5);
+
+    // Shaft (10-250px): light maple, tapers from 5px to 7px
+    const shaftGrad = ctx.createLinearGradient(10, 0, 250, 0);
+    shaftGrad.addColorStop(0, '#e8cc7a');
+    shaftGrad.addColorStop(0.5, '#f0d88a');
+    shaftGrad.addColorStop(1, '#d4a84a');
+    ctx.fillStyle = shaftGrad;
+    ctx.beginPath();
+    ctx.moveTo(10, -2.5);
+    ctx.lineTo(250, -3.5);
+    ctx.lineTo(250, 3.5);
+    ctx.lineTo(10, 2.5);
+    ctx.closePath();
+    ctx.fill();
+
+    // Wrap/joint (250-265px): dark band
+    ctx.fillStyle = '#2a1a0a';
+    ctx.fillRect(250, -3.5, 15, 7);
+
+    // Butt (265-340px): darker brown
+    const buttGrad = ctx.createLinearGradient(265, 0, 340, 0);
+    buttGrad.addColorStop(0, '#5a3520');
+    buttGrad.addColorStop(0.5, '#6b3f28');
+    buttGrad.addColorStop(1, '#4a2a15');
+    ctx.fillStyle = buttGrad;
+    ctx.fillRect(265, -4, 75, 8);
+
+    // Butt cap (340-350px): dark brown end cap
+    ctx.fillStyle = '#2a1a0a';
+    ctx.beginPath();
+    ctx.moveTo(340, -4);
+    ctx.lineTo(348, -4);
+    ctx.arc(348, 0, 4, -Math.PI / 2, Math.PI / 2);
+    ctx.lineTo(340, 4);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.restore();
+}
+
 function drawAimingArrow() {
     if (!isAiming) return;
 
     const dx = aimStart.x - aimEnd.x;
     const dy = aimStart.y - aimEnd.y;
     const power = Math.min(Math.sqrt(dx * dx + dy * dy) * POWER_SCALE, MAX_POWER);
-
-    if (power < 0.5) return;
+    const powerPct = power / MAX_POWER * 100;
 
     const angle = Math.atan2(dy, dx);
+
+    // Show cancel indicator when power drops below 5% after exceeding it
+    if (aimExceededThreshold && powerPct < 5) {
+        aimingStatusText = { text: 'Release to cancel shot', color: 'rgba(255, 100, 100, 0.8)' };
+        // Show cue at minimum distance during cancel zone
+        const minDist = CUE_GAP + BALL_RADIUS;
+        drawCueStick(cueBall.x - Math.cos(angle) * minDist, cueBall.y - Math.sin(angle) * minDist, angle);
+        return;
+    }
+
+    if (power < 0.5) return;
     const arrowLength = power * 10;
 
     const endX = cueBall.x + Math.cos(angle) * arrowLength;
@@ -1527,26 +1716,20 @@ function drawAimingArrow() {
     );
     ctx.stroke();
 
-    // Power indicator
-    ctx.fillStyle = '#ffffff';
-    ctx.font = '14px Arial';
-    ctx.textAlign = 'center';
-    const powerText = `Power: ${Math.round(power / MAX_POWER * 100)}%`;
-    if (isPortrait) {
-        ctx.save();
-        ctx.translate(TABLE_WIDTH / 2, 40);
-        ctx.rotate(Math.PI / 2);
-        ctx.fillText(powerText, 0, 0);
-        ctx.restore();
-    } else {
-        ctx.fillText(powerText, TABLE_WIDTH / 2, 40);
-    }
+    // Power indicator (drawn in screen space by render)
+    aimingStatusText = { text: `Power: ${Math.round(power / MAX_POWER * 100)}%`, color: '#ffffff' };
 
     // Draw deflection indicator on first ball in path
     const result = findFirstBallInPath(cueBall.x, cueBall.y, Math.cos(angle), Math.sin(angle));
     if (result) {
         drawDeflectionIndicator(result.ball, cueBall.x, cueBall.y, Math.cos(angle), Math.sin(angle));
     }
+
+    // Draw cue stick behind the ball, pulled back proportional to power
+    const tipDist = CUE_GAP + BALL_RADIUS + (power / MAX_POWER) * 80;
+    const tipX = cueBall.x - Math.cos(angle) * tipDist;
+    const tipY = cueBall.y - Math.sin(angle) * tipDist;
+    drawCueStick(tipX, tipY, angle);
 }
 
 function drawGameState() {
@@ -1558,56 +1741,26 @@ function drawGameState() {
         ctx.fillRect(0, 0, TABLE_WIDTH, TABLE_HEIGHT);
 
         const winText = currentMode === GAME_MODES.freePlay ? 'YOU WIN!' : `PLAYER ${currentPlayer} WINS!`;
-        if (isPortrait) {
-            ctx.save();
-            ctx.translate(TABLE_WIDTH / 2, TABLE_HEIGHT / 2);
-            ctx.rotate(Math.PI / 2);
-            ctx.fillStyle = '#00ff00';
-            ctx.font = 'bold 48px Arial';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(winText, 0, -20);
-            ctx.fillStyle = '#ffffff';
-            ctx.font = '20px Arial';
-            ctx.fillText('Tap to continue', 0, 30);
-            ctx.restore();
-        } else {
-            ctx.fillStyle = '#00ff00';
-            ctx.font = 'bold 48px Arial';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(winText, TABLE_WIDTH / 2, TABLE_HEIGHT / 2 - 20);
-            ctx.fillStyle = '#ffffff';
-            ctx.font = '20px Arial';
-            ctx.fillText('Click to continue', TABLE_WIDTH / 2, TABLE_HEIGHT / 2 + 30);
-        }
+        ctx.fillStyle = '#00ff00';
+        ctx.font = 'bold 48px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(winText, TABLE_WIDTH / 2, TABLE_HEIGHT / 2 - 20);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '20px Arial';
+        ctx.fillText('Click to continue', TABLE_WIDTH / 2, TABLE_HEIGHT / 2 + 30);
     } else if (gameState === 'lost') {
         ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
         ctx.fillRect(0, 0, TABLE_WIDTH, TABLE_HEIGHT);
 
-        if (isPortrait) {
-            ctx.save();
-            ctx.translate(TABLE_WIDTH / 2, TABLE_HEIGHT / 2);
-            ctx.rotate(Math.PI / 2);
-            ctx.fillStyle = '#ff0000';
-            ctx.font = 'bold 48px Arial';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('SCRATCH!', 0, -20);
-            ctx.fillStyle = '#ffffff';
-            ctx.font = '20px Arial';
-            ctx.fillText('Tap to continue', 0, 30);
-            ctx.restore();
-        } else {
-            ctx.fillStyle = '#ff0000';
-            ctx.font = 'bold 48px Arial';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('SCRATCH!', TABLE_WIDTH / 2, TABLE_HEIGHT / 2 - 20);
-            ctx.fillStyle = '#ffffff';
-            ctx.font = '20px Arial';
-            ctx.fillText('Click to continue', TABLE_WIDTH / 2, TABLE_HEIGHT / 2 + 30);
-        }
+        ctx.fillStyle = '#ff0000';
+        ctx.font = 'bold 48px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('SCRATCH!', TABLE_WIDTH / 2, TABLE_HEIGHT / 2 - 20);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '20px Arial';
+        ctx.fillText('Click to continue', TABLE_WIDTH / 2, TABLE_HEIGHT / 2 + 30);
     }
 }
 
@@ -1619,21 +1772,21 @@ function drawPlayerIndicator() {
 
     ctx.font = 'bold 14px Arial';
     ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
+    ctx.textBaseline = 'bottom';
 
-    // Current player indicator
-    const borderCenterY = BORDER / 2;
+    // Current player indicator — above the table, left-aligned
+    const aboveY = CUE_OVERHANG - 8;
     const playerText = `Player ${currentPlayer}'s Turn`;
     ctx.fillStyle = currentPlayer === 1 ? '#5599ff' : '#ff7755';
-    ctx.fillText(playerText, 55, borderCenterY);
+    ctx.fillText(playerText, CUE_OVERHANG + 5, aboveY);
 
     // Mode-specific info next to player indicator
     ctx.textAlign = 'left';
 
     if (currentMode === GAME_MODES.eightBall) {
         // Show group indicator as ball drawing
-        const miniX = 175;
-        const miniY = borderCenterY;
+        const miniX = CUE_OVERHANG + 125;
+        const miniY = aboveY - 7;
         const miniRadius = 8;
 
         if (player1Group) {
@@ -1708,8 +1861,8 @@ function drawPlayerIndicator() {
         // Show target ball (no label, just ball drawing)
         const lowestBall = getLowestBall();
         if (lowestBall) {
-            const miniX = 175;
-            const miniY = borderCenterY;
+            const miniX = CUE_OVERHANG + 125;
+            const miniY = aboveY - 7;
             const miniRadius = 8;
 
             // Ball body
@@ -1758,27 +1911,29 @@ function drawPlayerIndicator() {
 
 function drawInstructions() {
     ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-    ctx.font = isPortrait ? '12px Arial' : '14px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    const centerX = canvas.width / 2;
-    const bottomBorderCenterY = canvas.height - BORDER / 2;
+    const rot = getEffectiveRotation();
+    const isCompact = rot % 2 !== 0;
+    ctx.font = isCompact ? '12px Arial' : '14px Arial';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'bottom';
+    const aboveY = CUE_OVERHANG - 8;
+    const rightX = logicalW - CUE_OVERHANG - 5;
 
     if (gameState === 'ball_in_hand') {
-        ctx.fillText('Click to place cue ball', centerX, bottomBorderCenterY);
+        ctx.fillText('Click to place cue ball', rightX, aboveY);
         return;
     }
 
     if (gameState === 'breaking') {
-        const breakText = isPortrait ? 'Place cue ball in kitchen' : 'Place cue ball in the kitchen, then click to break';
-        ctx.fillText(breakText, centerX, bottomBorderCenterY);
+        const breakText = isCompact ? 'Place cue ball in kitchen' : 'Place cue ball in kitchen, then click to break';
+        ctx.fillText(breakText, rightX, aboveY);
         return;
     }
 
     if (gameState !== 'playing' || areBallsMoving()) return;
 
-    const aimText = isPortrait ? 'Drag from cue ball to aim' : 'Click and drag from the cue ball to aim, release to shoot';
-    ctx.fillText(aimText, centerX, bottomBorderCenterY);
+    const aimText = isCompact ? 'Drag from cue ball to aim' : 'Click and drag from the cue ball to aim, release to shoot';
+    ctx.fillText(aimText, rightX, aboveY);
 }
 
 function drawKitchenLine() {
@@ -1795,10 +1950,39 @@ function drawKitchenLine() {
 }
 
 function render() {
-    if (isPortrait) {
-        ctx.save();
-        ctx.translate(0, canvas.height);
-        ctx.rotate(-Math.PI / 2);
+    // Scale context to map logical coordinates to high-res buffer
+    const dpr = canvas.width / logicalW;
+    ctx.save();
+    ctx.scale(dpr, dpr);
+
+    // Fill entire canvas with page background so overhang blends seamlessly
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, 0, logicalW, logicalH);
+
+    const rot = getEffectiveRotation();
+    const swapped = rot === 1 || rot === 3;
+    const baseW = swapped ? TABLE_HEIGHT : TABLE_WIDTH;
+    const baseH = swapped ? TABLE_WIDTH : TABLE_HEIGHT;
+
+    ctx.save();
+    // Offset all drawing by overhang so table content starts at (CUE_OVERHANG, CUE_OVERHANG)
+    ctx.translate(CUE_OVERHANG, CUE_OVERHANG);
+
+    if (rot !== 0) {
+        switch (rot) {
+            case 1:
+                ctx.translate(baseW, 0);
+                ctx.rotate(Math.PI / 2);
+                break;
+            case 2:
+                ctx.translate(baseW, baseH);
+                ctx.rotate(Math.PI);
+                break;
+            case 3:
+                ctx.translate(0, baseH);
+                ctx.rotate(-Math.PI / 2);
+                break;
+        }
     }
 
     drawTable();
@@ -1812,14 +1996,42 @@ function render() {
     }
 
     drawAimingArrow();
+
+    // Strike animation
+    if (cueStriking) {
+        const elapsed = performance.now() - cueStrikeStartTime;
+        const t = Math.min(elapsed / CUE_STRIKE_DURATION, 1);
+        const currentDist = cueStrikeStartDist * (1 - t);
+        const tipX = cueBall.x - Math.cos(cueStrikeAngle) * currentDist;
+        const tipY = cueBall.y - Math.sin(cueStrikeAngle) * currentDist;
+        drawCueStick(tipX, tipY, cueStrikeAngle);
+
+        if (t >= 1) {
+            cueBall.vx = Math.cos(cueStrikeAngle) * cueStrikePower;
+            cueBall.vy = Math.sin(cueStrikeAngle) * cueStrikePower;
+            resetShotData();
+            cueStriking = false;
+        }
+    }
+
     drawGameState();
 
-    if (isPortrait) {
-        ctx.restore();
+    ctx.restore(); // restore the overhang translate (and rotation if any)
+
+    // Draw aiming status text centered above the table in screen space
+    if (aimingStatusText) {
+        ctx.fillStyle = aimingStatusText.color;
+        ctx.font = '14px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(aimingStatusText.text, logicalW / 2, CUE_OVERHANG - 4);
+        aimingStatusText = null;
     }
 
     drawPlayerIndicator();
     drawInstructions();
+
+    ctx.restore(); // restore DPR scale
 }
 
 // Reset game
@@ -1841,6 +2053,8 @@ function resetGame(mode = currentMode) {
     gameState = 'breaking';
     placementValid = true;
     isAiming = false;
+    aimExceededThreshold = false;
+    cueStriking = false;
     scratchPending = false;
     shotData.shotInProgress = false;
     shotData.firstBallHit = null;

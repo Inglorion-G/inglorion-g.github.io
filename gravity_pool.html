@@ -26,14 +26,10 @@
             position: relative;
             max-width: 100dvw;
             max-height: 100dvh;
-            overflow: hidden;
+            overflow: visible;
         }
         canvas {
-            border: 2px solid #3a1c0a;
-            border-radius: 10px;
             touch-action: none;
-            max-width: calc(100dvw - 36px);
-            max-height: calc(100dvh - 80px);
         }
         #controls {
             margin-top: 10px;
@@ -98,7 +94,7 @@
         #modeSelector button:hover {
             background: #357abd;
         }
-        #restartBtn {
+        #restartBtn, .rotate-btn {
             padding: 8px 16px;
             font-size: 14px;
             font-family: Arial, sans-serif;
@@ -109,7 +105,7 @@
             color: #ffffff;
             transition: background 0.2s;
         }
-        #restartBtn:hover {
+        #restartBtn:hover, .rotate-btn:hover {
             background: #357abd;
         }
     </style>
@@ -118,6 +114,8 @@
     <div id="gameContainer">
         <canvas id="gameCanvas"></canvas>
         <div id="controls">
+            <button class="rotate-btn" id="rotateCWBtn">&#8618;&#65039;</button>
+            <button class="rotate-btn" id="rotateCCWBtn">&#8617;&#65039;</button>
             <button id="restartBtn">Restart Game</button>
             <label>
                 <input type="checkbox" id="gravityToggle">
