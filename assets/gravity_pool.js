@@ -40,8 +40,9 @@ function updateCanvasCSS() {
     const hPad = window.innerWidth > 900 ? 240 : 36;
     const availW = window.innerWidth - hPad;
     const availH = window.innerHeight - 80;
-    // Scale so the table portion (not full canvas) fits available space
-    const scale = Math.min(availW / baseW, availH / baseH);
+    // Scale against table + reserves so spin UI and HUD text fit without overflow
+    // Top reserve: 20 canvas-px for HUD text, bottom reserve: 70 canvas-px for spin UI
+    const scale = Math.min(availW / baseW, availH / (baseH + 90));
     logicalW = baseW + 2 * CUE_OVERHANG;
     logicalH = baseH + 2 * CUE_OVERHANG;
     const fullW = logicalW * scale;
@@ -56,8 +57,10 @@ function updateCanvasCSS() {
     // Negative margins so layout box matches the table size (overhang extends beyond)
     // Reserve 20 canvas-px at top for aiming status text
     const textReserve = 20 * scale;
+    // Reserve 70 canvas-px at bottom for spin selector UI
+    const bottomReserve = 70 * scale;
     canvas.style.marginTop = -(overhangPx - textReserve) + 'px';
-    canvas.style.marginBottom = -overhangPx + 'px';
+    canvas.style.marginBottom = -(overhangPx - bottomReserve) + 'px';
     canvas.style.marginLeft = -overhangPx + 'px';
     canvas.style.marginRight = -overhangPx + 'px';
 }
@@ -85,6 +88,17 @@ const GRAVITY_NEAR_DISTANCE = 100;  // Distance considered "close" to gravity we
 const MIN_VELOCITY = 0.1;
 let POWER_SCALE = 0.15;
 let MAX_POWER = 30;
+
+// Spin constants
+const MAX_SPIN_OFFSET = 0.8;           // max contact offset as fraction of radius
+const SPIN_DECAY_RATE = 0.003;         // spin decay per pixel of travel
+const SPIN_COLLISION_RETAIN = 0.3;     // fraction of spin kept after ball-ball collision
+const TOPSPIN_FRICTION_BONUS = 0.006;  // max friction reduction from topspin
+const BACKSPIN_FRICTION_PENALTY = 0.015; // max friction increase from backspin
+const SIDE_SPIN_CUSHION_EFFECT = 6;    // tangential velocity added per unit of spin at cushion
+const SIDE_SPIN_THROW_ANGLE = 0.026;   // ~1.5° max throw at ball contact
+const DEFLECTION_BASE_ANGLE = 0.022;   // ~1.25° max deflection at cue strike
+const SPIN_UI_RADIUS = 28;            // radius of spin selector circle
 
 // Ball colors (standard pool)
 const BALL_COLORS = {
@@ -247,6 +261,8 @@ class Ball {
         this.label = label;
         this.isStripe = isStripe;
         this.active = true;
+        this.topSpin = 0;   // positive = topspin, negative = backspin
+        this.sideSpin = 0;  // positive = right english, negative = left english
         // 3x3 rotation matrix (column-major flat array) for rolling animation
         // | R[0] R[3] R[6] |   Column 2 (R[6],R[7],R[8]) = north pole (white cap axis)
         // | R[1] R[4] R[7] |   Solid balls: label at pole (column 2)
@@ -407,6 +423,7 @@ function createRackBalls(rackX, rackY, mode) {
 
 // Game state - initialize with Free Play mode
 let cueBall = new Ball(TABLE_WIDTH * 0.25, TABLE_HEIGHT / 2, '#ffffff');
+cueBall.orientation = [0, 0, 1, 0, 1, 0, -1, 0, 0]; // pole (dot) faces left
 let rackBalls = createRackBalls(TABLE_WIDTH * 0.7, TABLE_HEIGHT / 2, GAME_MODES.freePlay);
 let eightBall = null;
 let nineBall = null;
@@ -429,6 +446,9 @@ let gameState = 'mode_select'; // 'mode_select', 'breaking', 'playing', 'won', '
 let placementValid = true;  // Track if current ball_in_hand position is valid
 let scratchPending = false;  // Track if scratch occurred, waiting for balls to stop
 let gravityEnabled = false;  // Toggle for gravity well effect
+let spinOffsetX = 0;       // -1 to 1, horizontal offset (side spin)
+let spinOffsetY = 0;       // -1 to 1, vertical offset (top/backspin)
+let isDraggingSpin = false; // true when dragging spin dot
 let lastTime = 0;
 
 // Shot tracking for foul detection
@@ -485,6 +505,15 @@ canvas.addEventListener('mousedown', (e) => {
 
     if (areBallsMoving() || cueStriking) return;
 
+    // Check if clicking on spin UI
+    const spinOffset = screenToSpinOffset(e.clientX, e.clientY);
+    if (spinOffset && gameState === 'playing') {
+        isDraggingSpin = true;
+        spinOffsetX = spinOffset.x;
+        spinOffsetY = spinOffset.y;
+        return;
+    }
+
     const { x: mouseX, y: mouseY } = getGameCoords(e.clientX, e.clientY);
 
     // Check if clicking on cue ball
@@ -502,6 +531,16 @@ canvas.addEventListener('mousedown', (e) => {
 
 // Use document for mousemove/mouseup so dragging outside canvas still works
 document.addEventListener('mousemove', (e) => {
+    // Handle spin UI dragging
+    if (isDraggingSpin) {
+        const spinOffset = screenToSpinOffset(e.clientX, e.clientY);
+        if (spinOffset) {
+            spinOffsetX = spinOffset.x;
+            spinOffsetY = spinOffset.y;
+        }
+        return;
+    }
+
     const { x: mouseX, y: mouseY } = getGameCoords(e.clientX, e.clientY);
 
     // Handle ball_in_hand positioning
@@ -537,6 +576,10 @@ document.addEventListener('mousemove', (e) => {
 });
 
 document.addEventListener('mouseup', () => {
+    if (isDraggingSpin) {
+        isDraggingSpin = false;
+        return;
+    }
     if (!isAiming) return;
 
     // Calculate shot power and direction
@@ -597,6 +640,15 @@ canvas.addEventListener('touchstart', (e) => {
 
     if (areBallsMoving() || cueStriking) return;
 
+    // Check if tapping on spin UI
+    const spinOffset = screenToSpinOffset(touch.clientX, touch.clientY);
+    if (spinOffset && gameState === 'playing') {
+        isDraggingSpin = true;
+        spinOffsetX = spinOffset.x;
+        spinOffsetY = spinOffset.y;
+        return;
+    }
+
     const dx = touchX - cueBall.x;
     const dy = touchY - cueBall.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
@@ -613,6 +665,17 @@ canvas.addEventListener('touchstart', (e) => {
 canvas.addEventListener('touchmove', (e) => {
     e.preventDefault();
     const touch = e.touches[0];
+
+    // Handle spin UI dragging
+    if (isDraggingSpin) {
+        const spinOffset = screenToSpinOffset(touch.clientX, touch.clientY);
+        if (spinOffset) {
+            spinOffsetX = spinOffset.x;
+            spinOffsetY = spinOffset.y;
+        }
+        return;
+    }
+
     const { x: touchX, y: touchY } = getGameCoords(touch.clientX, touch.clientY);
 
     // Handle ball_in_hand positioning
@@ -646,6 +709,10 @@ canvas.addEventListener('touchmove', (e) => {
 });
 
 canvas.addEventListener('touchend', (e) => {
+    if (isDraggingSpin) {
+        isDraggingSpin = false;
+        return;
+    }
     if (!isAiming) return;
     e.preventDefault();
 
@@ -677,11 +744,30 @@ document.getElementById('gravityToggle').addEventListener('change', (e) => {
     gravityEnabled = e.target.checked;
 });
 
-// Keyboard shortcut for gravity toggle
+// Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
     if (e.key === 'g' || e.key === 'G') {
         gravityEnabled = !gravityEnabled;
         document.getElementById('gravityToggle').checked = gravityEnabled;
+    }
+
+    // Arrow keys adjust spin offset
+    if ((gameState === 'playing') && !areBallsMoving() && !cueStriking) {
+        const step = 0.1;
+        let handled = false;
+        if (e.key === 'ArrowLeft') { spinOffsetX = Math.max(-MAX_SPIN_OFFSET, spinOffsetX - step); handled = true; }
+        if (e.key === 'ArrowRight') { spinOffsetX = Math.min(MAX_SPIN_OFFSET, spinOffsetX + step); handled = true; }
+        if (e.key === 'ArrowUp') { spinOffsetY = Math.max(-MAX_SPIN_OFFSET, spinOffsetY - step); handled = true; }
+        if (e.key === 'ArrowDown') { spinOffsetY = Math.min(MAX_SPIN_OFFSET, spinOffsetY + step); handled = true; }
+        if (handled) {
+            // Clamp to unit circle
+            const mag = Math.sqrt(spinOffsetX * spinOffsetX + spinOffsetY * spinOffsetY);
+            if (mag > MAX_SPIN_OFFSET) {
+                spinOffsetX = spinOffsetX / mag * MAX_SPIN_OFFSET;
+                spinOffsetY = spinOffsetY / mag * MAX_SPIN_OFFSET;
+            }
+            e.preventDefault();
+        }
     }
 });
 
@@ -819,8 +905,8 @@ function checkFoul() {
         const currentGroup = getCurrentPlayerGroup();
         const firstHitGroup = getBallGroup(shotData.firstBallHit);
 
-        // Check if player has cleared their group
-        const playerCleared = hasPlayerClearedGroup(currentPlayer);
+        // Check if player had cleared their group BEFORE this shot
+        const playerCleared = hasPlayerClearedGroup(currentPlayer, true);
 
         if (playerCleared) {
             // Must hit 8-ball
@@ -844,12 +930,16 @@ function checkFoul() {
 }
 
 // Check if a player has cleared all balls in their group (8-ball)
-function hasPlayerClearedGroup(player) {
+// If beforeThisShot is true, balls pocketed this shot are treated as still on table
+function hasPlayerClearedGroup(player, beforeThisShot = false) {
     const group = player === 1 ? player1Group : player2Group;
     if (!group) return false;
 
     for (const ball of balls) {
-        if (ball === cueBall || !ball.active) continue;
+        if (ball === cueBall) continue;
+        // Ball is on table if active, or if we're checking pre-shot state and it was pocketed this shot
+        const onTable = ball.active || (beforeThisShot && shotData.ballsPocketed.includes(ball));
+        if (!onTable) continue;
         if (getBallGroup(ball) === group) {
             return false; // Still has balls of their group
         }
@@ -933,7 +1023,9 @@ function evaluateShot(wasBreakShot = false) {
             cueBall.y = TABLE_HEIGHT / 2;
             cueBall.vx = 0;
             cueBall.vy = 0;
-            cueBall.orientation = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+            cueBall.topSpin = 0;
+            cueBall.sideSpin = 0;
+            cueBall.orientation = [0, 0, 1, 0, 1, 0, -1, 0, 0];
         }
         return;
     }
@@ -1050,8 +1142,38 @@ function handleWallCollision(ball) {
             // Reflect velocity if moving toward the segment
             const vDotN = ball.vx * nx + ball.vy * ny;
             if (vDotN < 0) {
+                const preWallSpeed = Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy);
                 ball.vx -= (1 + 0.9) * vDotN * nx;
                 ball.vy -= (1 + 0.9) * vDotN * ny;
+
+                // Side spin cushion effects (cue ball only)
+                if (ball === cueBall && ball.sideSpin !== 0 && preWallSpeed > 0.5) {
+                    // Cushion tangent direction (surface velocity direction for clockwise spin)
+                    const tx = ny;
+                    const ty = -nx;
+                    // Current tangential velocity component
+                    const vTan = ball.vx * tx + ball.vy * ty;
+                    // Add tangential velocity from side spin
+                    // Angle influence = spin/speed ratio; velocity delta = angle * speed
+                    // Speed cancels out: slow ball + same spin = same velocity shift but larger angle change
+                    const spinTan = ball.sideSpin * SIDE_SPIN_CUSHION_EFFECT;
+                    ball.vx += tx * spinTan;
+                    ball.vy += ty * spinTan;
+
+                    // Running vs reverse english speed scaling
+                    const postSpeed = Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy);
+                    const sameSign = (vTan * spinTan) > 0; // running english
+                    const targetSpeed = sameSign ? preWallSpeed : preWallSpeed * 0.8;
+                    if (postSpeed > 0.01) {
+                        const speedScale = targetSpeed / postSpeed;
+                        ball.vx *= speedScale;
+                        ball.vy *= speedScale;
+                    }
+
+                    // Reverse and reduce side spin on cushion contact
+                    ball.sideSpin *= -0.4;
+                }
+
                 hitCushion = true;
             }
         }
@@ -1109,6 +1231,21 @@ function handleBallCollision(ball1, ball2) {
         const nx = dx / dist;
         const ny = dy / dist;
 
+        // Identify cue ball and object ball for spin effects
+        const cue = ball1 === cueBall ? ball1 : (ball2 === cueBall ? ball2 : null);
+        const obj = cue ? (cue === ball1 ? ball2 : ball1) : null;
+
+        // Save cue ball pre-collision state for spin effects
+        let preSpeed = 0;
+        let preDirX = 0, preDirY = 0;
+        if (cue) {
+            preSpeed = Math.sqrt(cue.vx * cue.vx + cue.vy * cue.vy);
+            if (preSpeed > 0.01) {
+                preDirX = cue.vx / preSpeed;
+                preDirY = cue.vy / preSpeed;
+            }
+        }
+
         // Relative velocity
         const dvx = ball1.vx - ball2.vx;
         const dvy = ball1.vy - ball2.vy;
@@ -1127,6 +1264,42 @@ function handleBallCollision(ball1, ball2) {
         ball1.vy += impulse * ny;
         ball2.vx -= impulse * nx;
         ball2.vy -= impulse * ny;
+
+        // Spin effects (cue ball only)
+        if (cue && preSpeed > 0.01) {
+            // Topspin/backspin: follow-through or draw
+            if (cue.topSpin !== 0) {
+                const spinEffect = cue.topSpin * preSpeed * 0.4;
+                cue.vx += preDirX * spinEffect;
+                cue.vy += preDirY * spinEffect;
+                // Safety clamp: post-spin speed must not exceed pre-collision speed
+                const postSpeed = Math.sqrt(cue.vx * cue.vx + cue.vy * cue.vy);
+                if (postSpeed > preSpeed) {
+                    const scale = preSpeed / postSpeed;
+                    cue.vx *= scale;
+                    cue.vy *= scale;
+                }
+                cue.topSpin *= SPIN_COLLISION_RETAIN;
+            }
+
+            // Side spin throw: shifts object ball perpendicular to collision normal
+            if (cue.sideSpin !== 0) {
+                // Tangent perpendicular to collision normal
+                // Normal points from cue to object ball
+                const collNx = cue === ball1 ? nx : -nx;
+                const collNy = cue === ball1 ? ny : -ny;
+                const tx = -collNy;
+                const ty = collNx;
+                const objSpeed = Math.sqrt(obj.vx * obj.vx + obj.vy * obj.vy);
+                // Throw angle = spin/speed ratio * effect constant
+                // Velocity delta = throw angle * object ball speed
+                const spinRatio = preSpeed > 0.1 ? cue.sideSpin / preSpeed : 0;
+                const throwMag = -spinRatio * SIDE_SPIN_THROW_ANGLE * objSpeed;
+                obj.vx += tx * throwMag;
+                obj.vy += ty * throwMag;
+                cue.sideSpin *= SPIN_COLLISION_RETAIN;
+            }
+        }
 
         // Separate balls to prevent overlap
         const overlap = minDist - dist;
@@ -1229,6 +1402,10 @@ function update(dt) {
             ball.y += ball.vy / substeps;
             if (checkPockets(ball)) { pocketed = true; break; }
             handleWallCollision(ball);
+            // Check ball-to-ball collisions per substep to prevent tunneling
+            for (const other of balls) {
+                if (other !== ball) handleBallCollision(ball, other);
+            }
         }
 
         // Apply speed-dependent friction (once per frame, not per substep)
@@ -1241,6 +1418,18 @@ function update(dt) {
             const eased = t * t * (3 - 2 * t);
             friction = FRICTION_LOW + (FRICTION_HIGH - FRICTION_LOW) * eased;
         }
+
+        // Spin-based friction modification (cue ball only)
+        if (ball === cueBall && ball.topSpin !== 0) {
+            if (ball.topSpin > 0) {
+                // Topspin: reduce deceleration (friction closer to 1.0), capped at 0.999
+                friction = Math.min(0.999, friction + ball.topSpin * TOPSPIN_FRICTION_BONUS);
+            } else {
+                // Backspin: increase deceleration (lower friction), floored at 0.90
+                friction = Math.max(0.90, friction + ball.topSpin * BACKSPIN_FRICTION_PENALTY);
+            }
+        }
+
         ball.vx *= friction;
         ball.vy *= friction;
 
@@ -1248,12 +1437,30 @@ function update(dt) {
         if (speed < MIN_VELOCITY) {
             ball.vx = 0;
             ball.vy = 0;
+            if (ball === cueBall) {
+                ball.topSpin = 0;
+                ball.sideSpin = 0;
+            }
         }
 
         // Update ball orientation from frame displacement (rolling animation)
-        updateBallOrientation(ball, ball.x - prevX, ball.y - prevY);
+        const frameDx = ball.x - prevX;
+        const frameDy = ball.y - prevY;
+        updateBallOrientation(ball, frameDx, frameDy);
         if (frameCount % 120 === 0 && ball.isMoving()) {
             reorthonormalize(ball.orientation);
+        }
+
+        // Spin decay based on distance traveled (cue ball only)
+        if (ball === cueBall && (ball.topSpin !== 0 || ball.sideSpin !== 0)) {
+            const frameDist = Math.sqrt(frameDx * frameDx + frameDy * frameDy);
+            if (frameDist > 0.001) {
+                const decayFactor = Math.exp(-SPIN_DECAY_RATE * frameDist);
+                ball.topSpin *= decayFactor;
+                ball.sideSpin *= decayFactor;
+            }
+            if (Math.abs(ball.topSpin) < 0.01) ball.topSpin = 0;
+            if (Math.abs(ball.sideSpin) < 0.01) ball.sideSpin = 0;
         }
 
         // Pocket detection - check for scratch and win conditions
@@ -1269,12 +1476,6 @@ function update(dt) {
         }
     }
 
-    // Ball-to-ball collisions
-    for (let i = 0; i < balls.length; i++) {
-        for (let j = i + 1; j < balls.length; j++) {
-            handleBallCollision(balls[i], balls[j]);
-        }
-    }
 
     // Check if scratch occurred and all balls have stopped
     if (scratchPending && !areBallsMoving()) {
@@ -1297,7 +1498,9 @@ function update(dt) {
         cueBall.y = TABLE_HEIGHT / 2;
         cueBall.vx = 0;
         cueBall.vy = 0;
-        cueBall.orientation = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+        cueBall.topSpin = 0;
+        cueBall.sideSpin = 0;
+        cueBall.orientation = [0, 0, 1, 0, 1, 0, -1, 0, 0];
     }
 
     // Check if shot completed (balls stopped moving)
@@ -1478,6 +1681,24 @@ function drawBall(ball) {
     ctx.beginPath();
     ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
     ctx.stroke();
+
+    // Cue ball dot (orientation-aware, tracks pole to show rolling)
+    if (ball === cueBall) {
+        const dotDirX = R[6];
+        const dotDirY = R[7];
+        const dotDirZ = R[8];
+        if (dotDirZ > 0.1) {
+            const dotX = ball.x + dotDirX * ball.radius;
+            const dotY = ball.y + dotDirY * ball.radius;
+            const dotAlpha = Math.min(1, (dotDirZ - 0.1) / 0.25);
+            ctx.globalAlpha = alpha * dotAlpha;
+            ctx.fillStyle = '#cc0000';
+            ctx.beginPath();
+            ctx.arc(dotX, dotY, ball.radius * 0.2 * dotDirZ, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = alpha;
+        }
+    }
 
     // Number label (orientation-aware)
     // Solid balls: label at pole (column 2). Stripe balls: label at equator (column 0).
@@ -1733,34 +1954,37 @@ function drawAimingArrow() {
 }
 
 function drawGameState() {
-    if (gameState === 'mode_select') {
+    // Draw dark overlay in rotated context (covers table surface)
+    if (gameState === 'mode_select' || gameState === 'won' || gameState === 'lost') {
         ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
         ctx.fillRect(0, 0, TABLE_WIDTH, TABLE_HEIGHT);
-    } else if (gameState === 'won') {
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-        ctx.fillRect(0, 0, TABLE_WIDTH, TABLE_HEIGHT);
+    }
+}
 
+// Draw overlay text in screen space so it's always readable
+function drawGameStateText() {
+    const centerX = logicalW / 2;
+    const centerY = logicalH / 2;
+
+    if (gameState === 'won') {
         const winText = currentMode === GAME_MODES.freePlay ? 'YOU WIN!' : `PLAYER ${currentPlayer} WINS!`;
         ctx.fillStyle = '#00ff00';
         ctx.font = 'bold 48px Arial';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(winText, TABLE_WIDTH / 2, TABLE_HEIGHT / 2 - 20);
+        ctx.fillText(winText, centerX, centerY - 20);
         ctx.fillStyle = '#ffffff';
         ctx.font = '20px Arial';
-        ctx.fillText('Click to continue', TABLE_WIDTH / 2, TABLE_HEIGHT / 2 + 30);
+        ctx.fillText('Click to continue', centerX, centerY + 30);
     } else if (gameState === 'lost') {
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-        ctx.fillRect(0, 0, TABLE_WIDTH, TABLE_HEIGHT);
-
         ctx.fillStyle = '#ff0000';
         ctx.font = 'bold 48px Arial';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText('SCRATCH!', TABLE_WIDTH / 2, TABLE_HEIGHT / 2 - 20);
+        ctx.fillText('SCRATCH!', centerX, centerY - 20);
         ctx.fillStyle = '#ffffff';
         ctx.font = '20px Arial';
-        ctx.fillText('Click to continue', TABLE_WIDTH / 2, TABLE_HEIGHT / 2 + 30);
+        ctx.fillText('Click to continue', centerX, centerY + 30);
     }
 }
 
@@ -1936,6 +2160,84 @@ function drawInstructions() {
     ctx.fillText(aimText, rightX, aboveY);
 }
 
+function drawSpinSelector() {
+    // Only show when player can aim (not moving, not striking, playing state)
+    if (gameState !== 'playing') return;
+    if (areBallsMoving() || cueStriking) return;
+
+    const cx = logicalW - CUE_OVERHANG - 42;
+    const cy = logicalH - CUE_OVERHANG + 38;
+    const r = SPIN_UI_RADIUS;
+
+    // Background circle
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Circle outline
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Crosshair lines
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(cx - r, cy);
+    ctx.lineTo(cx + r, cy);
+    ctx.moveTo(cx, cy - r);
+    ctx.lineTo(cx, cy + r);
+    ctx.stroke();
+
+    // Contact point dot (red)
+    const dotX = cx + spinOffsetX * r * 0.9;
+    const dotY = cy + spinOffsetY * r * 0.9;
+    ctx.fillStyle = '#ff3333';
+    ctx.beginPath();
+    ctx.arc(dotX, dotY, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // "SPIN" label below
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.font = '10px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText('SPIN', cx, cy + r + 4);
+}
+
+// Get spin UI center in screen-space coordinates
+function getSpinUICenter() {
+    return {
+        x: logicalW - CUE_OVERHANG - 42,
+        y: logicalH - CUE_OVERHANG + 38
+    };
+}
+
+// Convert screen coords to spin UI offset, returns {x, y} clamped to unit circle or null if outside
+function screenToSpinOffset(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    const sx = (clientX - rect.left) * (logicalW / rect.width);
+    const sy = (clientY - rect.top) * (logicalH / rect.height);
+    const center = getSpinUICenter();
+    const dx = sx - center.x;
+    const dy = sy - center.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > SPIN_UI_RADIUS * 1.3) return null; // outside with some tolerance
+    // Normalize to -1..1 range
+    let ox = dx / SPIN_UI_RADIUS;
+    let oy = dy / SPIN_UI_RADIUS;
+    // Clamp to unit circle
+    const mag = Math.sqrt(ox * ox + oy * oy);
+    if (mag > MAX_SPIN_OFFSET) {
+        ox = ox / mag * MAX_SPIN_OFFSET;
+        oy = oy / mag * MAX_SPIN_OFFSET;
+    }
+    return { x: ox, y: oy };
+}
+
 function drawKitchenLine() {
     if (gameState !== 'breaking') return;
 
@@ -1995,6 +2297,17 @@ function render() {
         drawBall(ball);
     }
 
+    // Pulsating ring around cue ball when at rest and not aiming
+    if (cueBall.active && !isAiming && !cueStriking && !areBallsMoving() &&
+        gameState === 'playing') {
+        const pulse = 0.3 + 0.3 * Math.sin(performance.now() / 390);
+        ctx.strokeStyle = `rgba(255, 255, 255, ${pulse})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(cueBall.x, cueBall.y, BALL_RADIUS + 5, 0, Math.PI * 2);
+        ctx.stroke();
+    }
+
     drawAimingArrow();
 
     // Strike animation
@@ -2007,8 +2320,27 @@ function render() {
         drawCueStick(tipX, tipY, cueStrikeAngle);
 
         if (t >= 1) {
-            cueBall.vx = Math.cos(cueStrikeAngle) * cueStrikePower;
-            cueBall.vy = Math.sin(cueStrikeAngle) * cueStrikePower;
+            let shotAngle = cueStrikeAngle;
+            const normalizedPower = cueStrikePower / MAX_POWER;
+
+            // Side spin deflection (squirt): shifts initial angle opposite to spin direction
+            // More power = less deflection
+            if (spinOffsetX !== 0) {
+                const powerDampen = 1 - normalizedPower * 0.6; // high power reduces deflection
+                shotAngle -= spinOffsetX * DEFLECTION_BASE_ANGLE * powerDampen;
+            }
+
+            cueBall.vx = Math.cos(shotAngle) * cueStrikePower;
+            cueBall.vy = Math.sin(shotAngle) * cueStrikePower;
+
+            // Set spin values from contact point offset
+            cueBall.topSpin = -spinOffsetY * normalizedPower;  // negative Y = top of ball = topspin
+            cueBall.sideSpin = spinOffsetX * normalizedPower;
+
+            // Reset spin UI for next shot
+            spinOffsetX = 0;
+            spinOffsetY = 0;
+
             resetShotData();
             cueStriking = false;
         }
@@ -2017,6 +2349,8 @@ function render() {
     drawGameState();
 
     ctx.restore(); // restore the overhang translate (and rotation if any)
+
+    drawGameStateText();
 
     // Draw aiming status text centered above the table in screen space
     if (aimingStatusText) {
@@ -2030,6 +2364,7 @@ function render() {
 
     drawPlayerIndicator();
     drawInstructions();
+    drawSpinSelector();
 
     ctx.restore(); // restore DPR scale
 }
@@ -2038,6 +2373,7 @@ function render() {
 function resetGame(mode = currentMode) {
     currentMode = mode;
     cueBall = new Ball(TABLE_WIDTH * 0.25, TABLE_HEIGHT / 2, '#ffffff');
+    cueBall.orientation = [0, 0, 1, 0, 1, 0, -1, 0, 0]; // pole (dot) faces left
     rackBalls = createRackBalls(TABLE_WIDTH * 0.7, TABLE_HEIGHT / 2, currentMode);
 
     // Track special balls based on mode
@@ -2056,6 +2392,9 @@ function resetGame(mode = currentMode) {
     aimExceededThreshold = false;
     cueStriking = false;
     scratchPending = false;
+    spinOffsetX = 0;
+    spinOffsetY = 0;
+    isDraggingSpin = false;
     shotData.shotInProgress = false;
     shotData.firstBallHit = null;
     shotData.ballsHitCushion.clear();
